@@ -1,0 +1,27 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node --check src/services/meta.js)",
+      "Bash(node --check src/routes/webhook.js)",
+      "Bash(node --check src/app.js)",
+      "Bash(node --check src/services/ai.js)",
+      "Bash(node -e ' *)",
+      "Bash(node -e \"console.log\\(require\\('crypto'\\).randomBytes\\(16\\).toString\\('hex'\\)\\)\")",
+      "Bash(node --check src/services/waha.js)",
+      "Bash(docker compose *)",
+      "Bash(timeout 20 docker compose up -d)",
+      "Bash(curl -s http://localhost:3000/health)",
+      "Bash(curl -s -u admin:a60c757f02b1a3e99d6a1dd0b1484b66 http://localhost:3001/api/server/status)",
+      "Bash(curl -s -H \"X-Api-Key: bf6cb998b327413d116d0e13c9a51c6e\" http://localhost:3001/api/server/status)",
+      "Bash(curl -s -H \"X-Api-Key: bf6cb998b327413d116d0e13c9a51c6e\" http://localhost:3001/api/sessions)",
+      "Bash(curl -s -X POST -H \"X-Api-Key: bf6cb998b327413d116d0e13c9a51c6e\" -H \"Content-Type: application/json\" -d '{\"name\":\"default\",\"start\":true}' http://localhost:3001/api/sessions)",
+      "Bash(curl -s -H \"X-Api-Key: bf6cb998b327413d116d0e13c9a51c6e\" http://localhost:3001/api/sessions/default)",
+      "Bash(curl -s -H \"X-Api-Key: bf6cb998b327413d116d0e13c9a51c6e\" -o \"C:\\\\Users\\\\traje\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-traje-Documents-Projetos-bot-safraplan\\\\479e7016-a2e0-44ed-be68-4d67f31cdb5a\\\\scratchpad\\\\waha-qr.png\" \"http://localhost:3001/api/default/auth/qr\" -w \"%{http_code}\")",
+      "Bash(node -c src/app.js)",
+      "Bash(node -c src/routes/chat.js)",
+      "Bash(node -c src/services/insights.js)",
+      "Bash(node -c src/services/ai.js)",
+      "Bash(node -c src/services/backendClient.js)"
+    ]
+  }
+}

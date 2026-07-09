@@ -1,0 +1,76 @@
+# Blueprint do Render — sobe os 3 serviços de uma vez: WAHA (gateway do WhatsApp),
+# o bot-safraplan e o Postgres do bot.
+#
+# IMPORTANTE:
+# - A WAHA precisa de disco persistente para não perder a sessão do WhatsApp (QR code) a
+#   cada deploy/restart — isso exige um plano pago no Render (o free tier não suporta disks).
+# - Confira na documentação oficial da WAHA (https://waha.devlike.pro) se os nomes das env
+#   vars abaixo (WAHA_API_KEY, WHATSAPP_HOOK_URL, WHATSAPP_HOOK_EVENTS, caminho do volume de
+#   sessão) continuam os mesmos na versão da imagem que você for usar — esses nomes mudaram
+#   entre versões da WAHA no passado.
+# - Depois do primeiro deploy, confirme se as URLs internas (WAHA_URL, WHATSAPP_HOOK_URL)
+#   resolveram corretamente; ajuste manualmente se o seu plano do Render não suportar
+#   `fromService` entre os dois serviços.
+
+services:
+  - type: web
+    name: waha-safraplan
+    runtime: image
+    image:
+      url: docker.io/devlikeapro/waha:latest
+    plan: starter
+    disk:
+      name: waha-sessions
+      mountPath: /app/.sessions
+      sizeGB: 1
+    envVars:
+      - key: WAHA_API_KEY
+        sync: false # defina manualmente no dashboard do Render — mesmo valor que WAHA_API_KEY do bot
+      - key: WHATSAPP_HOOK_EVENTS
+        value: message
+      - key: WAHA_PRINT_QR
+        value: "true"
+      - key: WHATSAPP_HOOK_URL
+        sync: false # defina manualmente: https://<seu-bot>.onrender.com/webhook/whatsapp?token=<WEBHOOK_SECRET>
+
+  - type: web
+    name: bot-safraplan
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: bot-safraplan-db
+          property: connectionString
+      - key: DATABASE_SSL
+        value: "true"
+      - key: WAHA_URL
+        fromService:
+          type: web
+          name: waha-safraplan
+          property: host
+      - key: WAHA_API_KEY
+        sync: false # mesmo valor configurado no serviço waha-safraplan
+      - key: WAHA_SESSION
+        value: default
+      - key: WEBHOOK_SECRET
+        generateValue: true
+      - key: BACKEND_API_URL
+        value: https://backend-safraplan.onrender.com/api/v1
+      - key: WHATSAPP_BOT_SECRET
+        sync: false # precisa ser IDÊNTICO ao WHATSAPP_BOT_SECRET do backend-safraplan
+      - key: AI_PROVIDER
+        value: openai
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+
+databases:
+  - name: bot-safraplan-db
+    plan: starter
+    databaseName: bot_safraplan
+    user: bot_user

@@ -1,0 +1,21 @@
+{
+  "name": "bot-safraplan",
+  "version": "1.0.0",
+  "description": "Bot de WhatsApp com IA para o SafraPlan: WhatsApp -> Meta Cloud API -> Webhook -> bot-safraplan -> OpenAI/Claude -> backend-safraplan -> Resposta -> WhatsApp",
+  "main": "src/app.js",
+  "scripts": {
+    "start": "node src/app.js",
+    "dev": "nodemon src/app.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "axios": "^1.7.9",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "openai": "^6.33.0",
+    "pg": "^8.13.3"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.9"
+  }
+}
