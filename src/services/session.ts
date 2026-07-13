@@ -17,6 +17,13 @@ export async function buscarSessao(celular: string): Promise<SessaoWhatsapp | nu
   return repo().findOne({ where: { celular } });
 }
 
+// Resolve a sessão só pelo clienteId do token (sem precisar do celular) — usado no /chat quando
+// o cliente já mandou mensagem pelo menos uma vez antes (a sessão precisa existir; sem celular
+// o bot não tem como autenticar um cliente novo no backend-safraplan).
+export async function buscarSessaoPorClienteId(clienteId: string): Promise<SessaoWhatsapp | null> {
+  return repo().findOne({ where: { clienteId } });
+}
+
 interface DadosSessao {
   clienteId: string;
   clienteSlug: string;
