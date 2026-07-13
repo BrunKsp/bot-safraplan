@@ -29,5 +29,6 @@ export default function autenticarCliente(req: Request, res: Response, next: Nex
 
   req.clienteToken = token;
   req.clienteIdToken = payload.sub;
+  req.clienteSlugToken = typeof payload.slug === 'string' ? payload.slug : undefined;
   next();
 }
