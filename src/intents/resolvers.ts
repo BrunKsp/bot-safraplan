@@ -1,9 +1,11 @@
 // Resolve nomes em texto livre (fazenda, categoria, produto) para os slugs que a API do
 // backend-safraplan espera, usando os dados cadastrados de cada cliente.
 
-const backendClient = require('../services/backendClient');
+import * as backendClient from '../services/backendClient';
+import { Categoria, Fazenda, Produto } from '../services/backendClient';
+import { SessaoWhatsapp } from '../database/entities/SessaoWhatsapp';
 
-function normalizar(texto) {
+export function normalizar(texto?: string | null): string {
   return (texto || '')
     .toString()
     .normalize('NFD')
@@ -12,18 +14,29 @@ function normalizar(texto) {
     .trim();
 }
 
-function encontrarPorNome(lista, campoNome, textoBusca) {
+function encontrarPorNome<T extends Record<string, unknown>>(lista: T[], campoNome: keyof T, textoBusca?: string): T | null {
   if (!textoBusca) return null;
   const alvo = normalizar(textoBusca);
   return (
-    lista.find((item) => normalizar(item[campoNome]) === alvo) ||
-    lista.find((item) => normalizar(item[campoNome]).includes(alvo) || alvo.includes(normalizar(item[campoNome])))
+    lista.find((item) => normalizar(String(item[campoNome])) === alvo) ||
+    lista.find((item) => {
+      const nome = normalizar(String(item[campoNome]));
+      return nome.includes(alvo) || alvo.includes(nome);
+    }) ||
+    null
   );
+}
+
+export interface ResolucaoFazenda {
+  erro?: string;
+  precisaEscolher?: true;
+  pergunta?: string;
+  fazenda?: Fazenda;
 }
 
 // Resolve a fazenda a ser usada: por nome mencionado, pela fazenda padrão salva na sessão,
 // pela única fazenda existente, ou pede para o produtor escolher.
-async function resolverFazenda(sessao, token, textoFazenda) {
+export async function resolverFazenda(sessao: SessaoWhatsapp, token: string, textoFazenda?: string): Promise<ResolucaoFazenda> {
   const fazendas = await backendClient.listarFazendas(token);
 
   if (fazendas.length === 0) {
@@ -36,8 +49,8 @@ async function resolverFazenda(sessao, token, textoFazenda) {
     return { erro: `Não encontrei nenhuma fazenda chamada "${textoFazenda}". Suas fazendas cadastradas: ${fazendas.map((f) => f.nome).join(', ')}.` };
   }
 
-  if (sessao.fazenda_padrao_slug) {
-    const padrao = fazendas.find((f) => f.slug === sessao.fazenda_padrao_slug);
+  if (sessao.fazendaPadraoSlug) {
+    const padrao = fazendas.find((f) => f.slug === sessao.fazendaPadraoSlug);
     if (padrao) return { fazenda: padrao };
   }
 
@@ -52,7 +65,7 @@ async function resolverFazenda(sessao, token, textoFazenda) {
 }
 
 // Resolve a categoria por nome em texto livre; se não encontrar, cai para "Outros".
-async function resolverCategoria(token, textoCategoria) {
+export async function resolverCategoria(token: string, textoCategoria?: string): Promise<Categoria> {
   const categorias = await backendClient.listarCategorias(token);
   const encontrada = encontrarPorNome(categorias, 'nome', textoCategoria);
   if (encontrada) return encontrada;
@@ -61,8 +74,13 @@ async function resolverCategoria(token, textoCategoria) {
   return outros || categorias[0];
 }
 
+export interface ResolucaoProduto {
+  erro?: string;
+  produto?: Produto;
+}
+
 // Resolve o produto por nome em texto livre.
-async function resolverProduto(token, textoProduto) {
+export async function resolverProduto(token: string, textoProduto?: string): Promise<ResolucaoProduto> {
   const produtos = await backendClient.listarProdutos(token, textoProduto);
   const encontrado = encontrarPorNome(produtos, 'nome', textoProduto);
   if (encontrado) return { produto: encontrado };
@@ -71,5 +89,3 @@ async function resolverProduto(token, textoProduto) {
     erro: `Não encontrei o produto "${textoProduto}" no catálogo. Produtos disponíveis: ${produtos.map((p) => p.nome).join(', ') || '(nenhum cadastrado ainda)'}.`,
   };
 }
-
-module.exports = { resolverFazenda, resolverCategoria, resolverProduto, normalizar };

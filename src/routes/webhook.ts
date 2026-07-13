@@ -11,20 +11,21 @@
 // A Meta assina cada POST com o header X-Hub-Signature-256 usando o App Secret — validamos
 // essa assinatura abaixo em vez de um token na query string.
 
-const crypto = require('crypto');
-const express = require('express');
-const router = express.Router();
-const { handleMessage } = require('../services/conversation');
-const waha = require('../services/waha');
-const meta = require('../services/meta');
+import crypto from 'crypto';
+import express, { Request, Response } from 'express';
+import { handleMessage } from '../services/conversation';
+import * as waha from '../services/waha';
+import * as meta from '../services/meta';
 
-function provider() {
+const router = express.Router();
+
+function provider(): string {
   return process.env.WHATSAPP_PROVIDER || 'meta';
 }
 
 // A Meta chama esse GET uma única vez, ao salvar a configuração do webhook, para confirmar a posse do endpoint.
 // A WAHA nunca chama GET, então esse handler é inofensivo quando WHATSAPP_PROVIDER=waha.
-router.get('/whatsapp', (req, res) => {
+router.get('/whatsapp', (req: Request, res: Response) => {
   const mode = req.query['hub.mode'];
   const token = req.query['hub.verify_token'];
   const challenge = req.query['hub.challenge'];
@@ -35,12 +36,12 @@ router.get('/whatsapp', (req, res) => {
   return res.sendStatus(403);
 });
 
-function assinaturaMetaValida(req) {
+function assinaturaMetaValida(req: Request): boolean {
   const assinatura = req.get('X-Hub-Signature-256');
   if (!assinatura || !req.rawBody) return false;
 
   const esperada = 'sha256=' + crypto
-    .createHmac('sha256', process.env.WHATSAPP_APP_SECRET)
+    .createHmac('sha256', process.env.WHATSAPP_APP_SECRET || '')
     .update(req.rawBody)
     .digest('hex');
 
@@ -50,24 +51,32 @@ function assinaturaMetaValida(req) {
   return crypto.timingSafeEqual(bufAssinatura, bufEsperada);
 }
 
-async function processarMensagem({ celular, texto, marcarDigitando, enviarResposta }) {
+interface ProcessarMensagemParams {
+  celular: string;
+  texto: string;
+  marcarDigitando: () => Promise<void>;
+  enviarResposta: (texto: string) => Promise<void>;
+}
+
+async function processarMensagem({ celular, texto, marcarDigitando, enviarResposta }: ProcessarMensagemParams): Promise<void> {
   try {
     await marcarDigitando();
     const resposta = await handleMessage({ celular, texto });
     if (resposta) await enviarResposta(resposta);
-  } catch (err) {
+  } catch (err: any) {
     console.error(`Erro ao processar mensagem de ${celular}:`, err.message);
     try {
       await enviarResposta('Tive um problema para processar sua mensagem agora. Tenta de novo em instantes?');
-    } catch (fallbackErr) {
+    } catch (fallbackErr: any) {
       console.error('Falha também no fallback:', fallbackErr.message);
     }
   }
 }
 
-async function handleWaha(req, res) {
+async function handleWaha(req: Request, res: Response): Promise<void> {
   if (req.query.token !== process.env.WEBHOOK_SECRET) {
-    return res.sendStatus(403);
+    res.sendStatus(403);
+    return;
   }
 
   // A WAHA espera uma resposta rápida — processa a mensagem depois de responder.
@@ -90,9 +99,10 @@ async function handleWaha(req, res) {
   });
 }
 
-async function handleMeta(req, res) {
+async function handleMeta(req: Request, res: Response): Promise<void> {
   if (!assinaturaMetaValida(req)) {
-    return res.sendStatus(403);
+    res.sendStatus(403);
+    return;
   }
 
   // A Meta espera uma resposta rápida — processa a mensagem depois de responder.
@@ -116,9 +126,9 @@ async function handleMeta(req, res) {
   });
 }
 
-router.post('/whatsapp', (req, res) => {
+router.post('/whatsapp', (req: Request, res: Response) => {
   if (provider() === 'waha') return handleWaha(req, res);
   return handleMeta(req, res);
 });
 
-module.exports = router;
+export default router;

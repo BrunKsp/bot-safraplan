@@ -1,12 +1,28 @@
 // Calcula números reais de gastos (totais por categoria, variação mês a mês, contas
 // vencendo) a partir do backend-safraplan e pede pra IA transformar isso em frases curtas,
 // no estilo do card "Insights do Plano" — a IA nunca inventa os números, só formata.
-const backendClient = require('./backendClient');
-const { gerarInsights } = require('./ai');
+import * as backendClient from './backendClient';
+import { gerarInsights } from './ai';
+import { SessaoWhatsapp } from '../database/entities/SessaoWhatsapp';
 
 const PAGE_SIZE = 100;
 
-function paraISO(data) {
+interface CategoriaResumo {
+  categoria: string;
+  totalMesAtual: number;
+  totalMesAnterior: number;
+  variacaoPercentual: number | null;
+  participacaoPercentual: number;
+}
+
+interface Resumo {
+  periodo: { inicioMesAtual: string; fimMesAtual: string };
+  totalGeralMesAtual: number;
+  categorias: CategoriaResumo[];
+  contasVencendoProximos7Dias: number;
+}
+
+function paraISO(data: Date): string {
   return data.toISOString().slice(0, 10);
 }
 
@@ -24,8 +40,8 @@ function limitesDoMes() {
   };
 }
 
-async function buscarTodasDespesas(token, params) {
-  const despesas = [];
+async function buscarTodasDespesas(token: string, params: Record<string, unknown>): Promise<any[]> {
+  const despesas: any[] = [];
   let page = 1;
 
   while (true) {
@@ -38,8 +54,8 @@ async function buscarTodasDespesas(token, params) {
   return despesas;
 }
 
-function agruparPorCategoria(despesas, nomePorCategoriaId) {
-  const totais = new Map();
+function agruparPorCategoria(despesas: any[], nomePorCategoriaId: Map<string, string>): Map<string, number> {
+  const totais = new Map<string, number>();
 
   for (const despesa of despesas) {
     const nome = nomePorCategoriaId.get(despesa.categoriaId) || 'Outros';
@@ -49,7 +65,7 @@ function agruparPorCategoria(despesas, nomePorCategoriaId) {
   return totais;
 }
 
-async function gerarInsightsDoMes(sessao) {
+export async function gerarInsightsDoMes(sessao: SessaoWhatsapp): Promise<{ insights: string[]; resumo: Resumo }> {
   const { token } = sessao;
   const { inicioMesAtual, fimMesAtual, inicioMesAnterior, fimMesAnterior } = limitesDoMes();
 
@@ -65,7 +81,7 @@ async function gerarInsightsDoMes(sessao) {
   const totaisMesAnterior = agruparPorCategoria(despesasMesAnterior, nomePorCategoriaId);
   const totalGeralMesAtual = [...totaisMesAtual.values()].reduce((soma, valor) => soma + valor, 0);
 
-  const categoriasResumo = [...totaisMesAtual.entries()]
+  const categoriasResumo: CategoriaResumo[] = [...totaisMesAtual.entries()]
     .map(([categoria, totalMesAtual]) => {
       const totalMesAnterior = totaisMesAnterior.get(categoria) || 0;
       const variacaoPercentual = totalMesAnterior > 0
@@ -79,7 +95,7 @@ async function gerarInsightsDoMes(sessao) {
     })
     .sort((a, b) => b.totalMesAtual - a.totalMesAtual);
 
-  const resumo = {
+  const resumo: Resumo = {
     periodo: { inicioMesAtual, fimMesAtual },
     totalGeralMesAtual,
     categorias: categoriasResumo,
@@ -93,5 +109,3 @@ async function gerarInsightsDoMes(sessao) {
   const { insights } = await gerarInsights(resumo);
   return { insights, resumo };
 }
-
-module.exports = { gerarInsightsDoMes };

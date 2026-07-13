@@ -21,7 +21,8 @@
       "Bash(node -c src/routes/chat.js)",
       "Bash(node -c src/services/insights.js)",
       "Bash(node -c src/services/ai.js)",
-      "Bash(node -c src/services/backendClient.js)"
+      "Bash(node -c src/services/backendClient.js)",
+      "Bash(powershell -c \"Get-Content tsconfig.json\")"
     ]
   }
 }

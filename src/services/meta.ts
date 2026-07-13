@@ -1,7 +1,7 @@
 // Serviço de integração com a API oficial do WhatsApp (Meta Cloud API).
 // Documentação: https://developers.facebook.com/docs/whatsapp/cloud-api
 
-const axios = require('axios');
+import axios from 'axios';
 
 const API_VERSION = process.env.WHATSAPP_API_VERSION || 'v21.0';
 
@@ -14,7 +14,7 @@ const meta = axios.create({
   timeout: 15000,
 });
 
-async function enviarTexto(celular, texto) {
+export async function enviarTexto(celular: string, texto: string): Promise<void> {
   try {
     await meta.post('/messages', {
       messaging_product: 'whatsapp',
@@ -22,7 +22,7 @@ async function enviarTexto(celular, texto) {
       type: 'text',
       text: { body: texto },
     });
-  } catch (err) {
+  } catch (err: any) {
     console.error('Erro ao enviar mensagem via Meta Cloud API:', err.response?.data || err.message);
     throw err;
   }
@@ -30,7 +30,7 @@ async function enviarTexto(celular, texto) {
 
 // Marca a mensagem recebida como lida e ativa o indicador de "digitando..." (fica visível por até
 // 25s ou até a próxima mensagem ser enviada) — melhora a percepção de resposta enquanto a IA processa.
-async function marcarComoLidaEDigitando(messageId) {
+export async function marcarComoLidaEDigitando(messageId: string): Promise<void> {
   try {
     await meta.post('/messages', {
       messaging_product: 'whatsapp',
@@ -38,9 +38,7 @@ async function marcarComoLidaEDigitando(messageId) {
       message_id: messageId,
       typing_indicator: { type: 'text' },
     });
-  } catch (err) {
+  } catch {
     // Não é crítico — ignora falha silenciosamente.
   }
 }
-
-module.exports = { enviarTexto, marcarComoLidaEDigitando };

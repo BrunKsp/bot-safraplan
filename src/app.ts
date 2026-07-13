@@ -2,12 +2,14 @@
 // Fluxo: WhatsApp -> WAHA ou Meta Cloud API (conforme WHATSAPP_PROVIDER) -> POST /webhook/whatsapp
 //        -> IA (OpenAI/Claude/NVIDIA) -> backend-safraplan -> resposta -> WhatsApp
 
-require('dotenv').config();
+import 'reflect-metadata';
+import dotenv from 'dotenv';
+dotenv.config();
 
-const express = require('express');
-const { migrar } = require('./config/migrate');
-const webhookRouter = require('./routes/webhook');
-const chatRouter = require('./routes/chat');
+import express from 'express';
+import { AppDataSource } from './database/data-source';
+import webhookRouter from './routes/webhook';
+import chatRouter from './routes/chat';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -16,7 +18,7 @@ const PORT = process.env.PORT || 3000;
 // que a Meta envia em cada chamada de webhook.
 app.use(express.json({
   verify: (req, _res, buf) => {
-    req.rawBody = buf;
+    (req as any).rawBody = buf;
   },
 }));
 
@@ -28,7 +30,7 @@ app.use('/webhook', webhookRouter);
 app.use('/chat', chatRouter);
 
 async function start() {
-  await migrar();
+  await AppDataSource.initialize();
 
   app.listen(PORT, () => {
     console.log(`bot-safraplan rodando na porta ${PORT}`);
@@ -43,6 +45,6 @@ start().catch((err) => {
   process.exit(1);
 });
 
-process.on('unhandledRejection', (err) => {
+process.on('unhandledRejection', (err: any) => {
   console.error('Erro não tratado:', err.message);
 });

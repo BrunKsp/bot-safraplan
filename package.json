@@ -2,10 +2,14 @@
   "name": "bot-safraplan",
   "version": "1.0.0",
   "description": "Bot de WhatsApp com IA para o SafraPlan: WhatsApp -> Meta Cloud API -> Webhook -> bot-safraplan -> OpenAI/Claude -> backend-safraplan -> Resposta -> WhatsApp",
-  "main": "src/app.js",
+  "main": "dist/app.js",
   "scripts": {
-    "start": "node src/app.js",
-    "dev": "nodemon src/app.js"
+    "start": "node dist/app.js",
+    "dev": "ts-node-dev --respawn --transpile-only src/app.ts",
+    "build": "tsc",
+    "migration:run": "typeorm-ts-node-commonjs migration:run -d src/database/data-source.ts",
+    "migration:revert": "typeorm-ts-node-commonjs migration:revert -d src/database/data-source.ts",
+    "migration:generate": "bash scripts/migration-generate.sh"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
@@ -13,9 +17,14 @@
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
     "openai": "^6.33.0",
-    "pg": "^8.13.3"
+    "pg": "^8.13.3",
+    "reflect-metadata": "^0.2.2",
+    "typeorm": "^0.3.28"
   },
   "devDependencies": {
-    "nodemon": "^3.1.9"
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.14.10",
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^5.5.4"
   }
 }
