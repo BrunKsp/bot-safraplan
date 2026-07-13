@@ -41,10 +41,12 @@ src/
 
 ## Chat direto (sem WhatsApp)
 
-Além do webhook, o bot expõe o mesmo motor de conversa por HTTP puro — útil para testar a IA (incluindo NVIDIA) sem precisar mandar mensagem de WhatsApp de verdade. As duas rotas exigem `Authorization: Bearer <token>` com o mesmo JWT que o cliente já usa no restante do SafraPlan, e o `celular` no corpo precisa estar vinculado a esse mesmo cliente (o bot confere isso e responde `403` se não bater).
+Além do webhook, o bot expõe o mesmo motor de conversa por HTTP puro — útil para testar a IA (incluindo NVIDIA) sem precisar mandar mensagem de WhatsApp de verdade. As duas rotas exigem `Authorization: Bearer <token>` com o mesmo JWT que o cliente já usa no restante do SafraPlan.
 
-- `POST /chat/mensagem` — body `{ "celular": "5511999999999", "mensagem": "gastei 500 reais com combustível hoje" }`. Roda exatamente o mesmo fluxo do WhatsApp (histórico, extração de intenção pela IA, registro no backend-safraplan) e devolve `{ "resposta": "..." }`.
-- `POST /chat/insights` — body `{ "celular": "5511999999999" }`. Calcula totais de gastos por categoria (mês atual vs anterior) e contas vencendo nos próximos 7 dias a partir do backend-safraplan, e pede pra IA transformar esses números em frases curtas — devolve `{ "insights": ["..."], "resumo": {...} }`.
+O `celular` no corpo é **opcional**: se vier, o bot autentica/cria a sessão por ele (e confere que pertence a esse mesmo cliente, respondendo `403` se não bater); se não vier, o bot busca a sessão já existente pelo `clienteId` do próprio token — só funciona se esse cliente já tiver mandado mensagem pelo menos uma vez antes (sem `celular` o bot não tem como autenticar um número novo no backend-safraplan).
+
+- `POST /chat/mensagem` — body `{ "celular": "5511999999999", "mensagem": "gastei 500 reais com combustível hoje" }` (celular opcional). Roda exatamente o mesmo fluxo do WhatsApp (histórico, extração de intenção pela IA, registro no backend-safraplan) e devolve `{ "resposta": "..." }`.
+- `POST /chat/insights` — body `{ "celular": "5511999999999" }` (celular opcional). Calcula totais de gastos por categoria (mês atual vs anterior) e contas vencendo nos próximos 7 dias a partir do backend-safraplan, e pede pra IA transformar esses números em frases curtas — devolve `{ "insights": ["..."], "resumo": {...} }`.
 
 ## Intenções suportadas
 
