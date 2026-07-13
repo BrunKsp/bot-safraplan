@@ -1,16 +1,18 @@
 // Acesso direto ao mesmo motor de conversa do WhatsApp (sessão + histórico + IA + handlers),
 // só que por HTTP puro — sem passar pela Meta/WAHA. Protegido pelo JWT que o cliente já usa
 // no restante do SafraPlan; o celular no corpo identifica de qual sessão/histórico reaproveitar.
-const express = require('express');
+import express, { Request, Response } from 'express';
+import autenticarCliente from '../middlewares/autenticarCliente';
+import * as session from '../services/session';
+import { handleMessage } from '../services/conversation';
+import { gerarInsightsDoMes } from '../services/insights';
+import { SessaoWhatsapp } from '../database/entities/SessaoWhatsapp';
+
 const router = express.Router();
-const autenticarCliente = require('../middlewares/autenticarCliente');
-const session = require('../services/session');
-const { handleMessage } = require('../services/conversation');
-const { gerarInsightsDoMes } = require('../services/insights');
 
 router.use(autenticarCliente);
 
-async function resolverSessaoAutorizada(req, res, celular) {
+async function resolverSessaoAutorizada(req: Request, res: Response, celular: string): Promise<SessaoWhatsapp | null> {
   if (!celular) {
     res.status(400).json({ erro: 'Informe o celular no corpo da requisição.' });
     return null;
@@ -26,7 +28,7 @@ async function resolverSessaoAutorizada(req, res, celular) {
     return null;
   }
 
-  if (sessao.cliente_id !== req.clienteIdToken) {
+  if (sessao.clienteId !== req.clienteIdToken) {
     res.status(403).json({ erro: 'Esse token não pertence a este número.' });
     return null;
   }
@@ -34,7 +36,7 @@ async function resolverSessaoAutorizada(req, res, celular) {
   return sessao;
 }
 
-router.post('/mensagem', async (req, res) => {
+router.post('/mensagem', async (req: Request, res: Response) => {
   const { celular, mensagem } = req.body || {};
 
   if (!mensagem || !mensagem.trim()) {
@@ -47,13 +49,13 @@ router.post('/mensagem', async (req, res) => {
   try {
     const resposta = await handleMessage({ celular, texto: mensagem.trim() });
     res.json({ resposta });
-  } catch (err) {
+  } catch (err: any) {
     console.error(`Erro ao processar mensagem direta de ${celular}:`, err.response?.data || err.message);
     res.status(500).json({ erro: 'Tive um problema para processar essa mensagem agora. Tenta de novo em instantes?' });
   }
 });
 
-router.post('/insights', async (req, res) => {
+router.post('/insights', async (req: Request, res: Response) => {
   const { celular } = req.body || {};
 
   const sessao = await resolverSessaoAutorizada(req, res, celular);
@@ -62,10 +64,10 @@ router.post('/insights', async (req, res) => {
   try {
     const { insights, resumo } = await gerarInsightsDoMes(sessao);
     res.json({ insights, resumo });
-  } catch (err) {
+  } catch (err: any) {
     console.error(`Erro ao gerar insights de ${celular}:`, err.response?.data || err.message);
     res.status(500).json({ erro: 'Tive um problema para calcular seus insights agora. Tenta de novo em instantes?' });
   }
 });
 
-module.exports = router;
+export default router;

@@ -2,30 +2,32 @@
 // que o cliente já usa no restante do SafraPlan. Não valida a assinatura aqui — só extrai o
 // clienteId (claim `sub`) para o handler confirmar que o token corresponde ao celular informado.
 // A validade de verdade do token é checada no backend-safraplan a cada chamada autenticada.
-const { decodificarToken } = require('../utils/jwt');
+import { NextFunction, Request, Response } from 'express';
+import { decodificarToken } from '../utils/jwt';
 
-function autenticarCliente(req, res, next) {
+export default function autenticarCliente(req: Request, res: Response, next: NextFunction): void {
   const authHeader = req.get('Authorization') || '';
   const [tipo, token] = authHeader.split(' ');
 
   if (tipo !== 'Bearer' || !token) {
-    return res.status(401).json({ erro: 'Informe o token de autenticação no header Authorization: Bearer <token>.' });
+    res.status(401).json({ erro: 'Informe o token de autenticação no header Authorization: Bearer <token>.' });
+    return;
   }
 
   let payload;
   try {
     payload = decodificarToken(token);
   } catch {
-    return res.status(401).json({ erro: 'Token inválido.' });
+    res.status(401).json({ erro: 'Token inválido.' });
+    return;
   }
 
   if (!payload?.sub) {
-    return res.status(401).json({ erro: 'Token inválido.' });
+    res.status(401).json({ erro: 'Token inválido.' });
+    return;
   }
 
   req.clienteToken = token;
   req.clienteIdToken = payload.sub;
   next();
 }
-
-module.exports = autenticarCliente;

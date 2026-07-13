@@ -16,27 +16,27 @@ Não existe login/senha por WhatsApp. O número de celular *é* a identidade: qu
 
 ```
 src/
-├── app.js                    # entrypoint (Express)
-├── config/
-│   ├── database.js           # pool do Postgres do bot
-│   ├── schema.sql            # tabelas: sessoes_whatsapp, mensagens
-│   └── migrate.js            # aplica o schema.sql no boot (idempotente)
+├── app.ts                     # entrypoint (Express)
+├── database/
+│   ├── data-source.ts         # DataSource do TypeORM (schema `chat`, migrations no boot)
+│   ├── entities/               # SessaoWhatsapp, Mensagem
+│   └── migrations/             # migrations do TypeORM (schema `chat`)
 ├── routes/
-│   ├── webhook.js             # POST /webhook/whatsapp — recebe eventos da WAHA/Meta
-│   └── chat.js                # POST /chat/mensagem, /chat/insights — acesso direto (sem WhatsApp)
+│   ├── webhook.ts              # POST /webhook/whatsapp — recebe eventos da WAHA/Meta
+│   └── chat.ts                 # POST /chat/mensagem, /chat/insights — acesso direto (sem WhatsApp)
 ├── middlewares/
-│   └── autenticarCliente.js  # exige Authorization: Bearer <token> nas rotas de /chat
+│   └── autenticarCliente.ts   # exige Authorization: Bearer <token> nas rotas de /chat
 ├── services/
-│   ├── waha.js                # envia mensagens de volta via WAHA
-│   ├── ai.js                  # OpenAI/Claude/NVIDIA com tool-calling -> intenção estruturada / insights
-│   ├── backendClient.js       # chamadas HTTP para o backend-safraplan
-│   ├── session.js             # celular <-> cliente/token do backend-safraplan
-│   ├── history.js             # histórico de mensagens (contexto pra IA)
-│   ├── insights.js            # agrega gastos por categoria e gera insights via IA
-│   └── conversation.js        # orquestrador: sessão + histórico + IA + handlers
+│   ├── waha.ts                 # envia mensagens de volta via WAHA
+│   ├── ai.ts                   # OpenAI/Claude/NVIDIA com tool-calling -> intenção estruturada / insights
+│   ├── backendClient.ts        # chamadas HTTP para o backend-safraplan
+│   ├── session.ts              # celular <-> cliente/token do backend-safraplan (via TypeORM)
+│   ├── history.ts              # histórico de mensagens (contexto pra IA, via TypeORM)
+│   ├── insights.ts             # agrega gastos por categoria e gera insights via IA
+│   └── conversation.ts         # orquestrador: sessão + histórico + IA + handlers
 └── intents/
-    ├── resolvers.js           # resolve nomes em texto livre -> slugs (fazenda/categoria/produto)
-    └── handlers.js             # um handler por intenção (despesa, conta, venda, resumo, preços)
+    ├── resolvers.ts            # resolve nomes em texto livre -> slugs (fazenda/categoria/produto)
+    └── handlers.ts              # um handler por intenção (despesa, conta, venda, resumo, preços)
 ```
 
 ## Chat direto (sem WhatsApp)
@@ -59,7 +59,7 @@ Além do webhook, o bot expõe o mesmo motor de conversa por HTTP puro — útil
 | `CONSULTAR_PRECOS_MERCADO` | "quanto tá a saca da soja" | `GET /fazendas/:slug/precos-mercado` |
 | `SAUDACAO` / `AJUDA` / `NAO_ENTENDI` | "oi", "o que você faz" | resposta direta da IA, sem chamar o backend |
 
-Quando falta uma informação obrigatória (ex: o cliente tem mais de uma fazenda e não disse qual), o bot pergunta e guarda o contexto pendente em `sessoes_whatsapp.contexto_pendente` — a próxima mensagem completa o registro, sem precisar repetir tudo.
+Quando falta uma informação obrigatória (ex: o cliente tem mais de uma fazenda e não disse qual), o bot pergunta e guarda o contexto pendente em `chat.sessoes_whatsapp.contexto_pendente` — a próxima mensagem completa o registro, sem precisar repetir tudo.
 
 ## Rodando localmente
 
@@ -103,7 +103,7 @@ Veja `.env.example`. Resumo do que cada uma faz:
 
 | Variável | Descrição |
 |---|---|
-| `DATABASE_URL` | Postgres próprio do bot (sessões + histórico) |
+| `DATABASE_URL` | Postgres próprio do bot (sessões + histórico, no schema `chat`, gerenciado via TypeORM) |
 | `WAHA_URL` / `WAHA_API_KEY` / `WAHA_SESSION` | Como o bot fala com a WAHA para enviar mensagens |
 | `WEBHOOK_SECRET` | Segredo na query string do webhook, pra evitar chamadas de terceiros |
 | `BACKEND_API_URL` | Base URL da API do backend-safraplan |

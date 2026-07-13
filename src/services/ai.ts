@@ -4,10 +4,45 @@
 // A IA sempre "chama uma ferramenta" (function/tool calling) em vez de responder em texto livre —
 // isso garante que a saída seja sempre um JSON previsível que o restante do bot sabe processar.
 
-const OpenAI = require('openai');
-const Anthropic = require('@anthropic-ai/sdk');
+import OpenAI from 'openai';
+import Anthropic from '@anthropic-ai/sdk';
+import { MensagemHistorico } from './history';
 
-const INTENTS = [
+export type Intent =
+  | 'REGISTRAR_DESPESA'
+  | 'REGISTRAR_CONTA_PAGAR'
+  | 'REGISTRAR_CONTA_RECEBER'
+  | 'REGISTRAR_VENDA'
+  | 'CONSULTAR_RESUMO'
+  | 'CONSULTAR_CONTAS_PAGAR'
+  | 'CONSULTAR_PRECOS_MERCADO'
+  | 'SAUDACAO'
+  | 'AJUDA'
+  | 'NAO_ENTENDI';
+
+export type FormaPagamento = 'DINHEIRO' | 'PIX' | 'CARTAO' | 'BOLETO' | 'FINANCIAMENTO' | 'OUTRO';
+export type UnidadeMedida = 'KG' | 'SACA' | 'TON' | 'ARROBA' | 'L' | 'UNIDADE';
+
+export interface CamposExtraidos {
+  intent: Intent;
+  valor?: number;
+  descricao?: string;
+  categoria?: string;
+  fazenda?: string;
+  safra?: string;
+  data?: string;
+  dataVencimento?: string;
+  formaPagamento?: FormaPagamento;
+  fornecedor?: string;
+  comprador?: string;
+  produto?: string;
+  quantidade?: number;
+  unidadeMedida?: UnidadeMedida;
+  gerarContaReceber?: boolean;
+  resposta?: string;
+}
+
+const INTENTS: Intent[] = [
   'REGISTRAR_DESPESA',
   'REGISTRAR_CONTA_PAGAR',
   'REGISTRAR_CONTA_RECEBER',
@@ -20,8 +55,8 @@ const INTENTS = [
   'NAO_ENTENDI',
 ];
 
-const FORMAS_PAGAMENTO = ['DINHEIRO', 'PIX', 'CARTAO', 'BOLETO', 'FINANCIAMENTO', 'OUTRO'];
-const UNIDADES = ['KG', 'SACA', 'TON', 'ARROBA', 'L', 'UNIDADE'];
+const FORMAS_PAGAMENTO: FormaPagamento[] = ['DINHEIRO', 'PIX', 'CARTAO', 'BOLETO', 'FINANCIAMENTO', 'OUTRO'];
+const UNIDADES: UnidadeMedida[] = ['KG', 'SACA', 'TON', 'ARROBA', 'L', 'UNIDADE'];
 
 const PARAMETROS = {
   type: 'object',
@@ -46,7 +81,7 @@ const PARAMETROS = {
   required: ['intent'],
 };
 
-function buildSystemPrompt(hoje) {
+function buildSystemPrompt(hoje: string): string {
   return `Você é o SafraBot, assistente de WhatsApp do SafraPlan — sistema de gestão financeira para produtores rurais.
 
 Sua única função é interpretar a mensagem do produtor e chamar a ferramenta "interpretar_mensagem" com os campos extraídos. Nunca responda em texto livre fora da ferramenta.
@@ -67,8 +102,14 @@ Exemplos de intenção:
 Sempre que faltar informação para registrar algo (ex: valor não mencionado), ainda assim classifique a intenção corretamente e deixe os campos que faltam de fora — quem trata os campos faltando é o backend do bot, não você.`;
 }
 
-function hojeISO() {
+function hojeISO(): string {
   return new Date().toISOString().slice(0, 10);
+}
+
+export type ResumoFinanceiro = object;
+
+export interface Insights {
+  insights: string[];
 }
 
 const INSIGHTS_PARAMETROS = {
@@ -83,7 +124,7 @@ const INSIGHTS_PARAMETROS = {
   required: ['insights'],
 };
 
-function buildInsightsSystemPrompt() {
+function buildInsightsSystemPrompt(): string {
   return `Você é o SafraBot, assistente financeiro do SafraPlan.
 
 Você vai receber um objeto JSON com números já calculados sobre os gastos do produtor (totais por categoria no mês atual e no mês anterior, variação percentual, participação percentual, e quantidade de contas vencendo nos próximos 7 dias).
@@ -91,7 +132,7 @@ Você vai receber um objeto JSON com números já calculados sobre os gastos do 
 Sua única função é chamar a ferramenta "gerar_insights" com 3 a 4 frases curtas em português, no mesmo tom de um card de insights de um app financeiro (ex: "Seus gastos com Combustível caíram 9% em relação ao mês anterior."). Use exatamente os números fornecidos — nunca invente ou arredonde de forma diferente do que já vier calculado. Não inclua frases sobre dados que não estejam no JSON.`;
 }
 
-async function gerarInsightsComOpenAI(resumo) {
+async function gerarInsightsComOpenAI(resumo: ResumoFinanceiro): Promise<Insights> {
   const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
   const response = await client.chat.completions.create({
@@ -105,11 +146,11 @@ async function gerarInsightsComOpenAI(resumo) {
   });
 
   const toolCall = response.choices[0].message.tool_calls?.[0];
-  if (!toolCall) return { insights: [] };
+  if (!toolCall || toolCall.type !== 'function') return { insights: [] };
   return JSON.parse(toolCall.function.arguments);
 }
 
-async function gerarInsightsComNvidia(resumo) {
+async function gerarInsightsComNvidia(resumo: ResumoFinanceiro): Promise<Insights> {
   const client = new OpenAI({
     apiKey: process.env.NVIDIA_API_KEY,
     baseURL: 'https://integrate.api.nvidia.com/v1',
@@ -123,15 +164,16 @@ async function gerarInsightsComNvidia(resumo) {
     ],
     tools: [{ type: 'function', function: { name: 'gerar_insights', description: 'Registra os insights financeiros gerados.', parameters: INSIGHTS_PARAMETROS } }],
     tool_choice: { type: 'function', function: { name: 'gerar_insights' } },
+    // @ts-expect-error -- extensão específica da NVIDIA NIM, fora do SDK oficial da OpenAI.
     chat_template_kwargs: { thinking: false },
   });
 
   const toolCall = response.choices[0].message.tool_calls?.[0];
-  if (!toolCall) return { insights: [] };
+  if (!toolCall || toolCall.type !== 'function') return { insights: [] };
   return JSON.parse(toolCall.function.arguments);
 }
 
-async function gerarInsightsComClaude(resumo) {
+async function gerarInsightsComClaude(resumo: ResumoFinanceiro): Promise<Insights> {
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
   const response = await client.messages.create({
@@ -139,18 +181,18 @@ async function gerarInsightsComClaude(resumo) {
     max_tokens: 500,
     system: buildInsightsSystemPrompt(),
     messages: [{ role: 'user', content: JSON.stringify(resumo) }],
-    tools: [{ name: 'gerar_insights', description: 'Registra os insights financeiros gerados.', input_schema: INSIGHTS_PARAMETROS }],
+    tools: [{ name: 'gerar_insights', description: 'Registra os insights financeiros gerados.', input_schema: INSIGHTS_PARAMETROS as any }],
     tool_choice: { type: 'tool', name: 'gerar_insights' },
   });
 
   const toolUse = response.content.find((bloco) => bloco.type === 'tool_use');
-  if (!toolUse) return { insights: [] };
-  return toolUse.input;
+  if (!toolUse || toolUse.type !== 'tool_use') return { insights: [] };
+  return toolUse.input as Insights;
 }
 
 // Transforma números já calculados (totais por categoria, variação mês a mês, contas
 // vencendo) em frases curtas de insight, usando o provedor configurado em AI_PROVIDER.
-async function gerarInsights(resumo) {
+export async function gerarInsights(resumo: ResumoFinanceiro): Promise<Insights> {
   const provider = process.env.AI_PROVIDER || 'openai';
 
   if (provider === 'anthropic') {
@@ -164,7 +206,9 @@ async function gerarInsights(resumo) {
   return gerarInsightsComOpenAI(resumo);
 }
 
-async function extrairComOpenAI(historico, mensagem) {
+const NAO_ENTENDI_FALLBACK: CamposExtraidos = { intent: 'NAO_ENTENDI', resposta: 'Não consegui entender, pode reformular?' };
+
+async function extrairComOpenAI(historico: MensagemHistorico[], mensagem: string): Promise<CamposExtraidos> {
   const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
   const response = await client.chat.completions.create({
@@ -188,16 +232,14 @@ async function extrairComOpenAI(historico, mensagem) {
   });
 
   const toolCall = response.choices[0].message.tool_calls?.[0];
-  if (!toolCall) {
-    return { intent: 'NAO_ENTENDI', resposta: 'Não consegui entender, pode reformular?' };
-  }
+  if (!toolCall || toolCall.type !== 'function') return NAO_ENTENDI_FALLBACK;
 
   return JSON.parse(toolCall.function.arguments);
 }
 
 // Modelos NVIDIA NIM (ex: DeepSeek) expõem "chat_template_kwargs.thinking" para desligar o
 // modo de raciocínio — queremos isso desligado aqui pra ter tool-calling determinístico e rápido.
-async function extrairComNvidia(historico, mensagem) {
+async function extrairComNvidia(historico: MensagemHistorico[], mensagem: string): Promise<CamposExtraidos> {
   const client = new OpenAI({
     apiKey: process.env.NVIDIA_API_KEY,
     baseURL: 'https://integrate.api.nvidia.com/v1',
@@ -221,18 +263,17 @@ async function extrairComNvidia(historico, mensagem) {
       },
     ],
     tool_choice: { type: 'function', function: { name: 'interpretar_mensagem' } },
+    // @ts-expect-error -- extensão específica da NVIDIA NIM, fora do SDK oficial da OpenAI.
     chat_template_kwargs: { thinking: false },
   });
 
   const toolCall = response.choices[0].message.tool_calls?.[0];
-  if (!toolCall) {
-    return { intent: 'NAO_ENTENDI', resposta: 'Não consegui entender, pode reformular?' };
-  }
+  if (!toolCall || toolCall.type !== 'function') return NAO_ENTENDI_FALLBACK;
 
   return JSON.parse(toolCall.function.arguments);
 }
 
-async function extrairComClaude(historico, mensagem) {
+async function extrairComClaude(historico: MensagemHistorico[], mensagem: string): Promise<CamposExtraidos> {
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
   const response = await client.messages.create({
@@ -244,23 +285,21 @@ async function extrairComClaude(historico, mensagem) {
       {
         name: 'interpretar_mensagem',
         description: 'Registra a intenção estruturada extraída da mensagem do produtor.',
-        input_schema: PARAMETROS,
+        input_schema: PARAMETROS as any,
       },
     ],
     tool_choice: { type: 'tool', name: 'interpretar_mensagem' },
   });
 
   const toolUse = response.content.find((bloco) => bloco.type === 'tool_use');
-  if (!toolUse) {
-    return { intent: 'NAO_ENTENDI', resposta: 'Não consegui entender, pode reformular?' };
-  }
+  if (!toolUse || toolUse.type !== 'tool_use') return NAO_ENTENDI_FALLBACK;
 
-  return toolUse.input;
+  return toolUse.input as CamposExtraidos;
 }
 
 // Extrai a intenção estruturada da mensagem, usando o provedor configurado em AI_PROVIDER.
 // `historico` é um array de { role: 'user' | 'assistant', content: string } com as últimas mensagens da conversa.
-async function extrairIntencao(historico, mensagem) {
+export async function extrairIntencao(historico: MensagemHistorico[], mensagem: string): Promise<CamposExtraidos> {
   const provider = process.env.AI_PROVIDER || 'openai';
 
   if (provider === 'anthropic') {
@@ -273,5 +312,3 @@ async function extrairIntencao(historico, mensagem) {
 
   return extrairComOpenAI(historico, mensagem);
 }
-
-module.exports = { extrairIntencao, gerarInsights };

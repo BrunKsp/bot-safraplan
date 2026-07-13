@@ -5,14 +5,22 @@
 // `resposta` — o orquestrador (conversation.js) salva isso como contexto pendente e, na próxima
 // mensagem, reinvoca o mesmo handler com o campo preenchido.
 
-const backendClient = require('../services/backendClient');
-const session = require('../services/session');
-const { resolverFazenda, resolverCategoria, resolverProduto } = require('./resolvers');
+import * as backendClient from '../services/backendClient';
+import * as session from '../services/session';
+import { resolverFazenda, resolverCategoria, resolverProduto } from './resolvers';
+import { CamposExtraidos } from '../services/ai';
+import { SessaoWhatsapp } from '../database/entities/SessaoWhatsapp';
 
-const moeda = (valor) => Number(valor || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+export interface ResultadoIntencao {
+  resposta?: string;
+  perguntar?: string;
+  pergunta?: string;
+}
+
+const moeda = (valor?: number) => Number(valor || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const hojeISO = () => new Date().toISOString().slice(0, 10);
 
-async function resolverFazendaOuPerguntar(sessao, campos) {
+async function resolverFazendaOuPerguntar(sessao: SessaoWhatsapp, campos: CamposExtraidos): Promise<ResultadoIntencao & { fazenda?: backendClient.Fazenda }> {
   const resultado = await resolverFazenda(sessao, sessao.token, campos.fazenda);
 
   if (resultado.erro) return { resposta: resultado.erro };
@@ -21,7 +29,7 @@ async function resolverFazendaOuPerguntar(sessao, campos) {
   return { fazenda: resultado.fazenda };
 }
 
-async function registrarDespesa(sessao, campos) {
+async function registrarDespesa(sessao: SessaoWhatsapp, campos: CamposExtraidos): Promise<ResultadoIntencao> {
   if (!campos.valor) return { resposta: 'Quanto foi o valor da despesa?' };
 
   const { fazenda, perguntar, pergunta, resposta } = await resolverFazendaOuPerguntar(sessao, campos);
@@ -30,10 +38,10 @@ async function registrarDespesa(sessao, campos) {
 
   const categoria = await resolverCategoria(sessao.token, campos.categoria);
 
-  await session.salvarFazendaPadrao(sessao.celular, fazenda.slug);
+  await session.salvarFazendaPadrao(sessao.celular, fazenda!.slug);
 
   const despesa = await backendClient.criarDespesa(sessao.token, {
-    fazendaSlug: fazenda.slug,
+    fazendaSlug: fazenda!.slug,
     categoriaSlug: categoria.slug,
     descricao: campos.descricao || categoria.nome,
     valor: campos.valor,
@@ -42,11 +50,11 @@ async function registrarDespesa(sessao, campos) {
   });
 
   return {
-    resposta: `Despesa registrada: ${moeda(despesa.valor)} em ${categoria.nome} na fazenda ${fazenda.nome}. ✅`,
+    resposta: `Despesa registrada: ${moeda(despesa.valor)} em ${categoria.nome} na fazenda ${fazenda!.nome}. ✅`,
   };
 }
 
-async function registrarContaPagar(sessao, campos) {
+async function registrarContaPagar(sessao: SessaoWhatsapp, campos: CamposExtraidos): Promise<ResultadoIntencao> {
   if (!campos.valor) return { resposta: 'Quanto é o valor da conta a pagar?' };
   if (!campos.dataVencimento) return { resposta: 'Pra quando é o vencimento?' };
 
@@ -54,10 +62,10 @@ async function registrarContaPagar(sessao, campos) {
   if (resposta) return { resposta };
   if (perguntar) return { perguntar, pergunta };
 
-  await session.salvarFazendaPadrao(sessao.celular, fazenda.slug);
+  await session.salvarFazendaPadrao(sessao.celular, fazenda!.slug);
 
   const conta = await backendClient.criarContaPagar(sessao.token, {
-    fazendaSlug: fazenda.slug,
+    fazendaSlug: fazenda!.slug,
     descricao: campos.descricao || 'Conta a pagar',
     valor: campos.valor,
     dataVencimento: campos.dataVencimento,
@@ -68,7 +76,7 @@ async function registrarContaPagar(sessao, campos) {
   return { resposta: `Conta a pagar registrada: ${moeda(conta.valor)}, vencimento em ${conta.dataVencimento}. ✅` };
 }
 
-async function registrarContaReceber(sessao, campos) {
+async function registrarContaReceber(sessao: SessaoWhatsapp, campos: CamposExtraidos): Promise<ResultadoIntencao> {
   if (!campos.valor) return { resposta: 'Quanto é o valor a receber?' };
   if (!campos.dataVencimento) return { resposta: 'Pra quando é o previsto?' };
 
@@ -76,10 +84,10 @@ async function registrarContaReceber(sessao, campos) {
   if (resposta) return { resposta };
   if (perguntar) return { perguntar, pergunta };
 
-  await session.salvarFazendaPadrao(sessao.celular, fazenda.slug);
+  await session.salvarFazendaPadrao(sessao.celular, fazenda!.slug);
 
   const conta = await backendClient.criarContaReceber(sessao.token, {
-    fazendaSlug: fazenda.slug,
+    fazendaSlug: fazenda!.slug,
     descricao: campos.descricao || 'Conta a receber',
     valor: campos.valor,
     dataVencimento: campos.dataVencimento,
@@ -89,7 +97,7 @@ async function registrarContaReceber(sessao, campos) {
   return { resposta: `Conta a receber registrada: ${moeda(conta.valor)}, previsto para ${conta.dataVencimento}. ✅` };
 }
 
-async function registrarVenda(sessao, campos) {
+async function registrarVenda(sessao: SessaoWhatsapp, campos: CamposExtraidos): Promise<ResultadoIntencao> {
   if (!campos.produto) return { resposta: 'O que você vendeu?' };
   if (!campos.quantidade) return { resposta: 'Qual a quantidade vendida?' };
   if (!campos.valor) return { resposta: 'Qual o preço unitário da venda?' };
@@ -101,13 +109,13 @@ async function registrarVenda(sessao, campos) {
   const produtoResolvido = await resolverProduto(sessao.token, campos.produto);
   if (produtoResolvido.erro) return { resposta: produtoResolvido.erro };
 
-  await session.salvarFazendaPadrao(sessao.celular, fazenda.slug);
+  await session.salvarFazendaPadrao(sessao.celular, fazenda!.slug);
 
   const venda = await backendClient.criarVenda(sessao.token, {
-    fazendaSlug: fazenda.slug,
-    produtoSlug: produtoResolvido.produto.slug,
+    fazendaSlug: fazenda!.slug,
+    produtoSlug: produtoResolvido.produto!.slug,
     quantidade: campos.quantidade,
-    unidadeMedida: campos.unidadeMedida || produtoResolvido.produto.unidadeMedida,
+    unidadeMedida: campos.unidadeMedida || produtoResolvido.produto!.unidadeMedida,
     precoUnitario: campos.valor,
     data: campos.data || hojeISO(),
     comprador: campos.comprador,
@@ -115,11 +123,11 @@ async function registrarVenda(sessao, campos) {
   });
 
   return {
-    resposta: `Venda registrada: ${campos.quantidade} ${venda.unidadeMedida} de ${produtoResolvido.produto.nome} a ${moeda(campos.valor)} = ${moeda(venda.valorTotal)}. ✅`,
+    resposta: `Venda registrada: ${campos.quantidade} ${venda.unidadeMedida} de ${produtoResolvido.produto!.nome} a ${moeda(campos.valor)} = ${moeda(venda.valorTotal)}. ✅`,
   };
 }
 
-async function consultarResumo(sessao) {
+async function consultarResumo(sessao: SessaoWhatsapp): Promise<ResultadoIntencao> {
   const resumo = await backendClient.getResumoDashboard(sessao.token, {});
 
   return {
@@ -134,7 +142,7 @@ async function consultarResumo(sessao) {
   };
 }
 
-async function consultarContasPagar(sessao) {
+async function consultarContasPagar(sessao: SessaoWhatsapp): Promise<ResultadoIntencao> {
   const contas = await backendClient.listarContasPagar(sessao.token, { status: 'PENDENTE' });
   const lista = Array.isArray(contas) ? contas : contas.dados || [];
 
@@ -142,27 +150,27 @@ async function consultarContasPagar(sessao) {
 
   const linhas = lista
     .slice(0, 10)
-    .map((c) => `• ${c.descricao} — ${moeda(c.valor)} (vence ${c.dataVencimento}, status ${c.statusConta})`);
+    .map((c: any) => `• ${c.descricao} — ${moeda(c.valor)} (vence ${c.dataVencimento}, status ${c.statusConta})`);
 
   return { resposta: `Suas contas a pagar:\n${linhas.join('\n')}` };
 }
 
-async function consultarPrecosMercado(sessao, campos) {
+async function consultarPrecosMercado(sessao: SessaoWhatsapp, campos: CamposExtraidos): Promise<ResultadoIntencao> {
   const { fazenda, perguntar, pergunta, resposta } = await resolverFazendaOuPerguntar(sessao, campos);
   if (resposta) return { resposta };
   if (perguntar) return { perguntar, pergunta };
 
-  const precos = await backendClient.getPrecosMercado(sessao.token, fazenda.slug);
+  const precos = await backendClient.getPrecosMercado(sessao.token, fazenda!.slug);
 
   if (precos.length === 0) {
     return { resposta: 'Ainda não tenho cotações para as culturas da sua fazenda. Tente novamente mais tarde.' };
   }
 
-  const linhas = precos.map((p) => `• ${p.cultura}: ${moeda(p.preco)} (${p.unidade}) em ${p.praca}/${p.estado} — ${p.data}`);
-  return { resposta: `Últimas cotações (${fazenda.nome}):\n${linhas.join('\n')}` };
+  const linhas = precos.map((p: any) => `• ${p.cultura}: ${moeda(p.preco)} (${p.unidade}) em ${p.praca}/${p.estado} — ${p.data}`);
+  return { resposta: `Últimas cotações (${fazenda!.nome}):\n${linhas.join('\n')}` };
 }
 
-const HANDLERS = {
+const HANDLERS: Record<string, (sessao: SessaoWhatsapp, campos: CamposExtraidos) => Promise<ResultadoIntencao>> = {
   REGISTRAR_DESPESA: registrarDespesa,
   REGISTRAR_CONTA_PAGAR: registrarContaPagar,
   REGISTRAR_CONTA_RECEBER: registrarContaReceber,
@@ -176,7 +184,7 @@ const HANDLERS = {
 // diretamente o campo `resposta` que a própria IA já preencheu.
 // Erros de chamada ao backend-safraplan propagam de propósito — quem decide se tenta de novo
 // (ex: token expirado) ou desiste é o orquestrador (conversation.js).
-async function tratarIntencao(sessao, campos) {
+export async function tratarIntencao(sessao: SessaoWhatsapp, campos: CamposExtraidos): Promise<ResultadoIntencao> {
   const handler = HANDLERS[campos.intent];
 
   if (!handler) {
@@ -185,5 +193,3 @@ async function tratarIntencao(sessao, campos) {
 
   return handler(sessao, campos);
 }
-
-module.exports = { tratarIntencao };
