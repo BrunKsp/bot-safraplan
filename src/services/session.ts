@@ -62,6 +62,15 @@ export async function autenticarCelular(celular: string): Promise<SessaoWhatsapp
   });
 }
 
+// Mantém o token da sessão sincronizado com o token que o cliente está usando agora (ex: chat
+// web, onde cada request já vem com um JWT válido) — evita depender de reautenticar por celular
+// no backend-safraplan só pra renovar um token que a gente já tem em mãos.
+export async function sincronizarToken(sessao: SessaoWhatsapp, token: string): Promise<SessaoWhatsapp> {
+  sessao.token = token;
+  sessao.tokenCriadoEm = new Date();
+  return repo().save(sessao);
+}
+
 export async function salvarFazendaPadrao(celular: string, fazendaSlug: string): Promise<void> {
   await repo().update({ celular }, { fazendaPadraoSlug: fazendaSlug });
 }

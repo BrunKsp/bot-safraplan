@@ -26,6 +26,11 @@
       "Bash(git -C /c/Users/traje/Documents/Projetos/bot-safraplan log --oneline -5)",
       "Bash(git -C /c/Users/traje/Documents/Projetos/bot-safraplan status --short)",
       "Bash(git -C /c/Users/traje/Documents/Projetos/bot-safraplan ls-files)"
+    ],
+    "additionalDirectories": [
+      "c:\\Users\\traje\\Documents\\Projetos\\frontend-safraplan\\src\\services",
+      "c:\\Users\\traje\\Documents\\Projetos\\frontend-safraplan\\src\\hooks",
+      "c:\\Users\\traje\\Documents\\Projetos\\frontend-safraplan\\src\\pages"
     ]
   }
 }
