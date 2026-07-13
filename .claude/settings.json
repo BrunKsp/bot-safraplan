@@ -22,7 +22,10 @@
       "Bash(node -c src/services/insights.js)",
       "Bash(node -c src/services/ai.js)",
       "Bash(node -c src/services/backendClient.js)",
-      "Bash(powershell -c \"Get-Content tsconfig.json\")"
+      "Bash(powershell -c \"Get-Content tsconfig.json\")",
+      "Bash(git -C /c/Users/traje/Documents/Projetos/bot-safraplan log --oneline -5)",
+      "Bash(git -C /c/Users/traje/Documents/Projetos/bot-safraplan status --short)",
+      "Bash(git -C /c/Users/traje/Documents/Projetos/bot-safraplan ls-files)"
     ]
   }
 }

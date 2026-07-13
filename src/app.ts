@@ -7,12 +7,19 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 import express from 'express';
+import cors from 'cors';
 import { AppDataSource } from './database/data-source';
 import webhookRouter from './routes/webhook';
 import chatRouter from './routes/chat';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// /chat é chamado direto do navegador (ex: frontend-safraplan testando o bot) — sem isso o
+// browser bloqueia a resposta por CORS. CORS_ORIGIN aceita uma lista separada por vírgulas; sem
+// ela definida, libera qualquer origem (ok pra dev, defina em produção).
+const origensPermitidas = process.env.CORS_ORIGIN?.split(',').map((origem) => origem.trim());
+app.use(cors({ origin: origensPermitidas ?? true }));
 
 // Guarda o body cru (antes do parse) — necessário para validar a assinatura HMAC (X-Hub-Signature-256)
 // que a Meta envia em cada chamada de webhook.
