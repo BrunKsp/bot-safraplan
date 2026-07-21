@@ -13,6 +13,7 @@
 import express, { Request, Response } from 'express';
 import autenticarCliente from '../middlewares/autenticarCliente';
 import * as session from '../services/session';
+import * as history from '../services/history';
 import { handleMessage } from '../services/conversation';
 import { gerarInsightsDoMes } from '../services/insights';
 import { SessaoWhatsapp } from '../database/entities/SessaoWhatsapp';
@@ -21,34 +22,34 @@ const router = express.Router();
 
 router.use(autenticarCliente);
 
+// Quando o corpo não informa `celular` (chat puro, sem WhatsApp), usa o clienteId do próprio
+// token como identificador da sessão — não depende de número de telefone nenhum.
+function identificadorSessao(req: Request, celular?: string): string {
+  return celular || `cliente:${req.clienteIdToken}`;
+}
+
 async function resolverSessaoAutorizada(req: Request, res: Response, celular?: string): Promise<SessaoWhatsapp | null> {
+  const identificador = identificadorSessao(req, celular);
   let sessao: SessaoWhatsapp | null;
 
   try {
-    sessao = celular ? await session.buscarSessao(celular) : await session.buscarSessaoPorClienteId(req.clienteIdToken!);
+    sessao = await session.buscarSessao(identificador);
 
-    if (!sessao && celular) {
-      // Primeira vez desse celular no chat direto: cria a sessão local a partir do próprio
-      // token da requisição (já autenticado), sem chamar o backend-safraplan de novo.
-      sessao = await session.criarOuAtualizarSessao(celular, {
+    if (!sessao) {
+      // Primeira mensagem dessa sessão: cria a partir do próprio token da requisição (já
+      // autenticado), sem chamar o backend-safraplan de novo.
+      sessao = await session.criarOuAtualizarSessao(identificador, {
         clienteId: req.clienteIdToken!,
         clienteSlug: req.clienteSlugToken || '',
         nome: null,
         token: req.clienteToken!,
       });
-    } else if (sessao && sessao.token !== req.clienteToken) {
+    } else if (sessao.token !== req.clienteToken) {
       sessao = await session.sincronizarToken(sessao, req.clienteToken!);
     }
   } catch (err: any) {
-    console.error(`Erro ao resolver sessão de ${celular || req.clienteIdToken}:`, err.response?.data || err.message);
+    console.error(`Erro ao resolver sessão de ${identificador}:`, err.response?.data || err.message);
     res.status(500).json({ erro: 'Tive um problema para confirmar sua conta no SafraPlan agora. Tenta de novo em instantes?' });
-    return null;
-  }
-
-  if (!sessao) {
-    res.status(404).json({
-      erro: 'Não encontrei nenhuma sessão de WhatsApp para este cliente. Informe o celular no corpo da requisição na primeira vez.',
-    });
     return null;
   }
 
@@ -76,6 +77,22 @@ router.post('/mensagem', async (req: Request, res: Response) => {
   } catch (err: any) {
     console.error(`Erro ao processar mensagem direta de ${sessao.celular}:`, err.response?.data || err.message);
     res.status(500).json({ erro: 'Tive um problema para processar essa mensagem agora. Tenta de novo em instantes?' });
+  }
+});
+
+router.get('/historico', async (req: Request, res: Response) => {
+  const celular = typeof req.query.celular === 'string' ? req.query.celular : undefined;
+  const limit = req.query.limit ? Number(req.query.limit) : undefined;
+
+  const sessao = await resolverSessaoAutorizada(req, res, celular);
+  if (!sessao) return;
+
+  try {
+    const mensagens = await history.getHistorico(sessao.celular, limit);
+    res.json({ mensagens });
+  } catch (err: any) {
+    console.error(`Erro ao buscar histórico de ${sessao.celular}:`, err.response?.data || err.message);
+    res.status(500).json({ erro: 'Tive um problema para buscar o histórico agora. Tenta de novo em instantes?' });
   }
 });
 
