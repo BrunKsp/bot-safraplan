@@ -64,11 +64,25 @@ export async function resolverFazenda(sessao: SessaoWhatsapp, token: string, tex
   };
 }
 
-// Resolve a categoria por nome em texto livre; se não encontrar, cai para "Outros".
-export async function resolverCategoria(token: string, textoCategoria?: string): Promise<Categoria> {
+function capitalizar(texto: string): string {
+  return texto.trim().replace(/^\p{L}/u, (letra) => letra.toUpperCase());
+}
+
+// Resolve a categoria por nome em texto livre; se não encontrar nenhuma parecida entre as já
+// cadastradas do cliente, cria uma nova categoria com esse nome (em vez de cair em "Outros" e
+// mascarar o gasto real) — melhor a lista de categorias crescer do que perder a categorização.
+export async function resolverCategoria(
+  token: string,
+  textoCategoria?: string,
+  tipo: 'DESPESA' | 'RECEITA' | 'INSUMO' = 'DESPESA'
+): Promise<Categoria> {
   const categorias = await backendClient.listarCategorias(token);
   const encontrada = encontrarPorNome(categorias, 'nome', textoCategoria);
   if (encontrada) return encontrada;
+
+  if (textoCategoria?.trim()) {
+    return backendClient.criarCategoria(token, { nome: capitalizar(textoCategoria), tipo });
+  }
 
   const outros = categorias.find((c) => normalizar(c.nome) === 'outros');
   return outros || categorias[0];

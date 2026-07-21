@@ -72,6 +72,11 @@ export async function listarCategorias(token: string): Promise<Categoria[]> {
   return data;
 }
 
+export async function criarCategoria(token: string, payload: { nome: string; tipo: 'DESPESA' | 'RECEITA' | 'INSUMO' }): Promise<Categoria> {
+  const { data } = await api.post<Categoria>('/categorias', payload, comToken(token));
+  return data;
+}
+
 export async function listarProdutos(token: string, busca?: string): Promise<Produto[]> {
   const { data } = await api.get<Produto[]>('/produtos', { ...comToken(token), params: busca ? { busca } : undefined });
   return data;
