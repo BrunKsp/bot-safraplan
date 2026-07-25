@@ -43,6 +43,13 @@ export async function resolverFazenda(sessao: SessaoWhatsapp, token: string, tex
     return { erro: 'Você ainda não tem nenhuma fazenda cadastrada no SafraPlan. Cadastre uma pelo aplicativo antes de registrar dados por aqui.' };
   }
 
+  // Só uma fazenda cadastrada: não há ambiguidade nenhuma pra resolver, então usa ela sempre —
+  // mesmo que a IA (sobretudo na leitura de imagem) tenha "extraído" algum texto de fazenda que
+  // não bate com nada (ex: confundiu endereço do estabelecimento no cupom com nome de fazenda).
+  if (fazendas.length === 1) {
+    return { fazenda: fazendas[0] };
+  }
+
   if (textoFazenda) {
     const encontrada = encontrarPorNome(fazendas, 'nome', textoFazenda);
     if (encontrada) return { fazenda: encontrada };
@@ -52,10 +59,6 @@ export async function resolverFazenda(sessao: SessaoWhatsapp, token: string, tex
   if (sessao.fazendaPadraoSlug) {
     const padrao = fazendas.find((f) => f.slug === sessao.fazendaPadraoSlug);
     if (padrao) return { fazenda: padrao };
-  }
-
-  if (fazendas.length === 1) {
-    return { fazenda: fazendas[0] };
   }
 
   return {

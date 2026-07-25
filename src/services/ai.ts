@@ -327,7 +327,9 @@ A data de hoje é ${hoje} (formato YYYY-MM-DD). Se a imagem tiver uma data visí
 
 Na grande maioria dos casos a intenção correta é REGISTRAR_DESPESA (valor total, descrição do que foi comprado, categoria — ex: combustível, insumos, manutenção — e forma de pagamento se visível no comprovante).
 
-IMPORTANTE sobre o campo "fazenda": é a propriedade rural do PRODUTOR onde a despesa se aplica — ela nunca aparece impressa num cupom fiscal ou recibo. Nome do estabelecimento (ex: "Posto Extremoz"), endereço, CNPJ, razão social e rodapé de nota fiscal NÃO são fazenda — deixe o campo "fazenda" de fora nesses casos (o sistema pergunta ao produtor depois, se precisar). Só preencha "fazenda" se o produtor tiver escrito à mão ou anotado explicitamente o nome da propriedade na imagem. O nome do estabelecimento pode entrar em "descricao" (ex: "Abastecimento no Posto Extremoz"), nunca em "fazenda".
+IMPORTANTE sobre o campo "valor": use SEMPRE o valor total IMPRESSO no documento (linha "VALOR TOTAL", "TOTAL A PAGAR" ou equivalente). Anotações escritas à mão, números circulados/rabiscados ou rasurados no verso ou nas bordas do cupom NÃO são o valor da despesa — ignore-os completamente, mesmo que pareçam mais em destaque que o total impresso.
+
+IMPORTANTE sobre o campo "fazenda": é a propriedade rural do PRODUTOR — essa informação NUNCA está impressa num cupom fiscal, recibo ou comprovante de pagamento, então NUNCA preencha "fazenda" a partir de texto impresso na imagem. Isso inclui, sem exceção: nome do estabelecimento (ex: "Posto Extremoz"), endereço, CNPJ, razão social, nome do banco/adquirente/bandeira do cartão, e qualquer outro texto impresso — mesmo que pareça um nome próprio ou lembre um termo agrícola. NUNCA use "SafraPlan", "SafraBot" ou qualquer variação do nome do sistema/assistente (mencionados acima neste prompt) como valor de "fazenda" — não existe relação entre o nome do produto e a propriedade do produtor. Na dúvida, deixe "fazenda" de fora — o sistema pergunta ao produtor depois, se precisar. Só preencha "fazenda" se o produtor tiver escrito à mão, à parte, algo como "fazenda: X" ou anotado claramente o nome da propriedade. O nome do estabelecimento pode entrar em "descricao" (ex: "Abastecimento no Posto Extremoz"), nunca em "fazenda".
 
 Se a imagem não for legível ou não parecer um documento financeiro, use intent NAO_ENTENDI e preencha "resposta" pedindo para o produtor descrever a despesa em texto ou mandar uma foto mais nítida.`;
 }
@@ -401,8 +403,27 @@ async function classificarImagemComClaude(base64: string, mimeType: string): Pro
 // Modelos de tool-calling do NIM nem sempre suportam visão junto com function-calling — em vez de
 // arriscar, pedimos o JSON direto no texto da resposta e extraímos o primeiro bloco {...} dela.
 function buildImageJsonInstructions(): string {
-  return `Responda APENAS com um objeto JSON válido (sem markdown, sem texto fora do JSON, sem comentários), no formato:
+  return `Sua resposta inteira deve ser SOMENTE o objeto JSON abaixo preenchido — nenhuma outra palavra antes ou depois, nenhuma explicação, nenhum markdown/crase, nenhuma lista com "*". A primeira letra da sua resposta precisa ser "{" e a última precisa ser "}". O campo "data" precisa estar EXATAMENTE no formato YYYY-MM-DD (ex: 2026-07-25) — nunca DD/MM/YYYY.
+
+Formato exato:
 {"intent": "REGISTRAR_DESPESA" | "NAO_ENTENDI", "valor": number opcional, "descricao": string opcional, "categoria": string opcional, "fazenda": string opcional, "data": "YYYY-MM-DD" opcional, "formaPagamento": "DINHEIRO"|"PIX"|"CARTAO"|"BOLETO"|"FINANCIAMENTO"|"OUTRO" opcional, "resposta": string opcional (obrigatório se intent for NAO_ENTENDI)}`;
+}
+
+// O modelo às vezes manda a data em DD/MM/YYYY apesar da instrução — normaliza em vez de
+// confiar 100% no formato pedido, pra não quebrar a validação do backend-safraplan.
+function normalizarData(data?: string): string | undefined {
+  if (!data) return undefined;
+
+  const isoMatch = data.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (isoMatch) return `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`;
+
+  const brMatch = data.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})/);
+  if (brMatch) {
+    const [, dia, mes, ano] = brMatch;
+    return `${ano}-${mes.padStart(2, '0')}-${dia.padStart(2, '0')}`;
+  }
+
+  return undefined;
 }
 
 function extrairJsonDaResposta(texto: string): CamposExtraidos {
@@ -410,7 +431,9 @@ function extrairJsonDaResposta(texto: string): CamposExtraidos {
   if (!match) return NAO_ENTENDI_FALLBACK;
 
   try {
-    return JSON.parse(match[0]);
+    const campos = JSON.parse(match[0]);
+    if (campos.data) campos.data = normalizarData(campos.data);
+    return campos;
   } catch {
     return NAO_ENTENDI_FALLBACK;
   }
@@ -424,7 +447,7 @@ async function classificarImagemComNvidia(base64: string, mimeType: string): Pro
 
   const response = await client.chat.completions.create({
     model: process.env.NVIDIA_VISION_MODEL || 'meta/llama-3.2-11b-vision-instruct',
-    max_tokens: 500,
+    max_tokens: 1000,
     messages: [
       { role: 'system', content: `${buildImageSystemPrompt(hojeISO())}\n\n${buildImageJsonInstructions()}` },
       {
@@ -438,6 +461,8 @@ async function classificarImagemComNvidia(base64: string, mimeType: string): Pro
   });
 
   const texto = response.choices[0]?.message?.content?.trim();
+  const finishReason = response.choices[0]?.finish_reason;
+  console.log(`[classificarImagemComNvidia] finish_reason=${finishReason} texto=${JSON.stringify(texto)}`);
   if (!texto) return NAO_ENTENDI_FALLBACK;
 
   return extrairJsonDaResposta(texto);
@@ -452,6 +477,12 @@ const IMAGEM_SEM_PROVEDOR_VISAO: CamposExtraidos = {
 // Quando AI_PROVIDER=nvidia, usa um modelo de visão do NIM (NVIDIA_VISION_MODEL, mesma
 // NVIDIA_API_KEY já configurada para texto) — não depende de OpenAI/Anthropic.
 export async function classificarImagem(base64: string, mimeType: string): Promise<CamposExtraidos> {
+  const campos = await classificarImagemComProvider(base64, mimeType);
+  if (campos.data) campos.data = normalizarData(campos.data);
+  return campos;
+}
+
+async function classificarImagemComProvider(base64: string, mimeType: string): Promise<CamposExtraidos> {
   const provider = process.env.AI_PROVIDER || 'openai';
 
   if (provider === 'anthropic') {
