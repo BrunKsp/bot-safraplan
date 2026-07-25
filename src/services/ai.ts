@@ -327,6 +327,8 @@ A data de hoje é ${hoje} (formato YYYY-MM-DD). Se a imagem tiver uma data visí
 
 Na grande maioria dos casos a intenção correta é REGISTRAR_DESPESA (valor total, descrição do que foi comprado, categoria — ex: combustível, insumos, manutenção — e forma de pagamento se visível no comprovante).
 
+IMPORTANTE sobre o campo "fazenda": é a propriedade rural do PRODUTOR onde a despesa se aplica — ela nunca aparece impressa num cupom fiscal ou recibo. Nome do estabelecimento (ex: "Posto Extremoz"), endereço, CNPJ, razão social e rodapé de nota fiscal NÃO são fazenda — deixe o campo "fazenda" de fora nesses casos (o sistema pergunta ao produtor depois, se precisar). Só preencha "fazenda" se o produtor tiver escrito à mão ou anotado explicitamente o nome da propriedade na imagem. O nome do estabelecimento pode entrar em "descricao" (ex: "Abastecimento no Posto Extremoz"), nunca em "fazenda".
+
 Se a imagem não for legível ou não parecer um documento financeiro, use intent NAO_ENTENDI e preencha "resposta" pedindo para o produtor descrever a despesa em texto ou mandar uma foto mais nítida.`;
 }
 
