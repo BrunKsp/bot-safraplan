@@ -3,7 +3,8 @@
 
 import * as session from './session';
 import * as history from './history';
-import { extrairIntencao, CamposExtraidos } from './ai';
+import * as storage from './storage';
+import { extrairIntencao, classificarImagem, CamposExtraidos } from './ai';
 import { tratarIntencao } from '../intents/handlers';
 import { SessaoWhatsapp } from '../database/entities/SessaoWhatsapp';
 
@@ -25,27 +26,16 @@ async function comRenovacaoDeToken<T>(sessao: SessaoWhatsapp, fn: (sessao: Sessa
   }
 }
 
-export async function handleMessage({ celular, texto }: { celular: string; texto: string }): Promise<string> {
-  let sessao = await session.buscarSessao(celular);
+// Resolve a sessão do celular, autenticando pela primeira vez se necessário.
+async function resolverSessao(celular: string): Promise<SessaoWhatsapp | null> {
+  const sessao = await session.buscarSessao(celular);
+  if (sessao) return sessao;
+  return session.autenticarCelular(celular);
+}
 
-  if (!sessao) {
-    sessao = await session.autenticarCelular(celular);
-    if (!sessao) return MENSAGEM_SEM_CADASTRO;
-  }
-
-  await history.salvarMensagem(celular, 'user', texto);
-
-  let campos: CamposExtraidos;
-
-  if (sessao.contextoPendente) {
-    // A mensagem atual é a resposta à pergunta que o bot fez (ex: "qual fazenda?").
-    const { campos: camposAnteriores, perguntando } = sessao.contextoPendente;
-    campos = { ...camposAnteriores, [perguntando]: texto.trim() } as unknown as CamposExtraidos;
-  } else {
-    const historico = await history.getRecentHistory(celular);
-    campos = await extrairIntencao(historico, texto);
-  }
-
+// Trecho comum a mensagens de texto e de imagem: roda o handler da intenção, trata a pergunta
+// pendente (quando falta algum campo) e persiste a resposta no histórico.
+async function processarCampos(sessao: SessaoWhatsapp, celular: string, campos: CamposExtraidos): Promise<string> {
   let resultado;
   try {
     resultado = await comRenovacaoDeToken(sessao, (s) => tratarIntencao(s, campos));
@@ -63,4 +53,55 @@ export async function handleMessage({ celular, texto }: { celular: string; texto
   await session.limparContextoPendente(celular);
   await history.salvarMensagem(celular, 'assistant', resultado.resposta!);
   return resultado.resposta!;
+}
+
+export async function handleMessage({ celular, texto }: { celular: string; texto: string }): Promise<string> {
+  const sessao = await resolverSessao(celular);
+  if (!sessao) return MENSAGEM_SEM_CADASTRO;
+
+  await history.salvarMensagem(celular, 'user', texto);
+
+  let campos: CamposExtraidos;
+
+  if (sessao.contextoPendente) {
+    // A mensagem atual é a resposta à pergunta que o bot fez (ex: "qual fazenda?").
+    const { campos: camposAnteriores, perguntando } = sessao.contextoPendente;
+    campos = { ...camposAnteriores, [perguntando]: texto.trim() } as unknown as CamposExtraidos;
+  } else {
+    const historico = await history.getRecentHistory(celular);
+    campos = await extrairIntencao(historico, texto);
+  }
+
+  return processarCampos(sessao, celular, campos);
+}
+
+// Processa uma foto recebida (nota fiscal, recibo, comprovante etc.): classifica com IA de visão
+// e sobe a imagem para o R2 em paralelo, anexando a URL resultante à despesa quando aplicável.
+export async function handleImageMessage({
+  celular,
+  buffer,
+  mimeType,
+}: {
+  celular: string;
+  buffer: Buffer;
+  mimeType: string;
+}): Promise<string> {
+  const sessao = await resolverSessao(celular);
+  if (!sessao) return MENSAGEM_SEM_CADASTRO;
+
+  await history.salvarMensagem(celular, 'user', '[foto enviada]');
+
+  const base64 = buffer.toString('base64');
+
+  const [campos, anexoUrl] = await Promise.all([
+    classificarImagem(base64, mimeType),
+    storage.uploadImagem(buffer, celular, mimeType).catch((err) => {
+      console.error(`Erro ao subir imagem para o R2 (${celular}):`, err.message);
+      return undefined;
+    }),
+  ]);
+
+  if (anexoUrl) campos.anexoUrl = anexoUrl;
+
+  return processarCampos(sessao, celular, campos);
 }
