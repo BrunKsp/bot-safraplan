@@ -40,6 +40,9 @@ export interface CamposExtraidos {
   unidadeMedida?: UnidadeMedida;
   gerarContaReceber?: boolean;
   resposta?: string;
+  // Preenchido pelo orquestrador (não pela IA) quando a mensagem era uma foto e o upload para o
+  // R2 deu certo — não faz parte do schema de tool-calling.
+  anexoUrl?: string;
 }
 
 const INTENTS: Intent[] = [
@@ -311,4 +314,154 @@ export async function extrairIntencao(historico: MensagemHistorico[], mensagem: 
   }
 
   return extrairComOpenAI(historico, mensagem);
+}
+
+// ─── Classificação de imagem (foto de nota fiscal, recibo, cupom, comprovante PIX etc.) ───────
+
+function buildImageSystemPrompt(hoje: string): string {
+  return `Você é o SafraBot, assistente de WhatsApp do SafraPlan — sistema de gestão financeira para produtores rurais.
+
+O produtor te enviou uma FOTO em vez de texto. A imagem costuma ser uma nota fiscal, recibo, cupom fiscal ou comprovante de pagamento (ex: PIX, boleto pago). Examine a imagem e extraia os campos estruturados, do mesmo jeito que faria para uma mensagem de texto equivalente.
+
+A data de hoje é ${hoje} (formato YYYY-MM-DD). Se a imagem tiver uma data visível, use-a; senão use a data de hoje.
+
+Na grande maioria dos casos a intenção correta é REGISTRAR_DESPESA (valor total, descrição do que foi comprado, categoria — ex: combustível, insumos, manutenção — e forma de pagamento se visível no comprovante).
+
+Se a imagem não for legível ou não parecer um documento financeiro, use intent NAO_ENTENDI e preencha "resposta" pedindo para o produtor descrever a despesa em texto ou mandar uma foto mais nítida.`;
+}
+
+async function classificarImagemComOpenAI(base64: string, mimeType: string): Promise<CamposExtraidos> {
+  const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+  const response = await client.chat.completions.create({
+    model: 'gpt-4o-mini',
+    messages: [
+      { role: 'system', content: buildImageSystemPrompt(hojeISO()) },
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'Analise esta imagem e extraia os dados financeiros.' },
+          { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64}` } },
+        ],
+      },
+    ],
+    tools: [
+      {
+        type: 'function',
+        function: {
+          name: 'interpretar_mensagem',
+          description: 'Registra a intenção estruturada extraída da imagem enviada pelo produtor.',
+          parameters: PARAMETROS,
+        },
+      },
+    ],
+    tool_choice: { type: 'function', function: { name: 'interpretar_mensagem' } },
+  });
+
+  const toolCall = response.choices[0].message.tool_calls?.[0];
+  if (!toolCall || toolCall.type !== 'function') return NAO_ENTENDI_FALLBACK;
+
+  return JSON.parse(toolCall.function.arguments);
+}
+
+async function classificarImagemComClaude(base64: string, mimeType: string): Promise<CamposExtraidos> {
+  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+  const response = await client.messages.create({
+    model: 'claude-sonnet-4-6',
+    max_tokens: 500,
+    system: buildImageSystemPrompt(hojeISO()),
+    messages: [
+      {
+        role: 'user',
+        content: [
+          { type: 'image', source: { type: 'base64', media_type: mimeType as any, data: base64 } },
+          { type: 'text', text: 'Analise esta imagem e extraia os dados financeiros.' },
+        ],
+      },
+    ],
+    tools: [
+      {
+        name: 'interpretar_mensagem',
+        description: 'Registra a intenção estruturada extraída da imagem enviada pelo produtor.',
+        input_schema: PARAMETROS as any,
+      },
+    ],
+    tool_choice: { type: 'tool', name: 'interpretar_mensagem' },
+  });
+
+  const toolUse = response.content.find((bloco) => bloco.type === 'tool_use');
+  if (!toolUse || toolUse.type !== 'tool_use') return NAO_ENTENDI_FALLBACK;
+
+  return toolUse.input as CamposExtraidos;
+}
+
+// Modelos de tool-calling do NIM nem sempre suportam visão junto com function-calling — em vez de
+// arriscar, pedimos o JSON direto no texto da resposta e extraímos o primeiro bloco {...} dela.
+function buildImageJsonInstructions(): string {
+  return `Responda APENAS com um objeto JSON válido (sem markdown, sem texto fora do JSON, sem comentários), no formato:
+{"intent": "REGISTRAR_DESPESA" | "NAO_ENTENDI", "valor": number opcional, "descricao": string opcional, "categoria": string opcional, "fazenda": string opcional, "data": "YYYY-MM-DD" opcional, "formaPagamento": "DINHEIRO"|"PIX"|"CARTAO"|"BOLETO"|"FINANCIAMENTO"|"OUTRO" opcional, "resposta": string opcional (obrigatório se intent for NAO_ENTENDI)}`;
+}
+
+function extrairJsonDaResposta(texto: string): CamposExtraidos {
+  const match = texto.match(/\{[\s\S]*\}/);
+  if (!match) return NAO_ENTENDI_FALLBACK;
+
+  try {
+    return JSON.parse(match[0]);
+  } catch {
+    return NAO_ENTENDI_FALLBACK;
+  }
+}
+
+async function classificarImagemComNvidia(base64: string, mimeType: string): Promise<CamposExtraidos> {
+  const client = new OpenAI({
+    apiKey: process.env.NVIDIA_API_KEY,
+    baseURL: 'https://integrate.api.nvidia.com/v1',
+  });
+
+  const response = await client.chat.completions.create({
+    model: process.env.NVIDIA_VISION_MODEL || 'meta/llama-3.2-11b-vision-instruct',
+    max_tokens: 500,
+    messages: [
+      { role: 'system', content: `${buildImageSystemPrompt(hojeISO())}\n\n${buildImageJsonInstructions()}` },
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'Analise esta imagem e extraia os dados financeiros.' },
+          { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64}` } },
+        ],
+      },
+    ],
+  });
+
+  const texto = response.choices[0]?.message?.content?.trim();
+  if (!texto) return NAO_ENTENDI_FALLBACK;
+
+  return extrairJsonDaResposta(texto);
+}
+
+const IMAGEM_SEM_PROVEDOR_VISAO: CamposExtraidos = {
+  intent: 'NAO_ENTENDI',
+  resposta: 'Ainda não consigo analisar imagens com a configuração atual. Pode descrever a despesa em texto?',
+};
+
+// Classifica uma imagem (base64, sem o prefixo "data:...;base64,") recebida por WhatsApp.
+// Quando AI_PROVIDER=nvidia, usa um modelo de visão do NIM (NVIDIA_VISION_MODEL, mesma
+// NVIDIA_API_KEY já configurada para texto) — não depende de OpenAI/Anthropic.
+export async function classificarImagem(base64: string, mimeType: string): Promise<CamposExtraidos> {
+  const provider = process.env.AI_PROVIDER || 'openai';
+
+  if (provider === 'anthropic') {
+    if (!process.env.ANTHROPIC_API_KEY) return IMAGEM_SEM_PROVEDOR_VISAO;
+    return classificarImagemComClaude(base64, mimeType);
+  }
+
+  if (provider === 'nvidia') {
+    if (!process.env.NVIDIA_API_KEY) return IMAGEM_SEM_PROVEDOR_VISAO;
+    return classificarImagemComNvidia(base64, mimeType);
+  }
+
+  if (!process.env.OPENAI_API_KEY) return IMAGEM_SEM_PROVEDOR_VISAO;
+  return classificarImagemComOpenAI(base64, mimeType);
 }

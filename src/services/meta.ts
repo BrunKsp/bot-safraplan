@@ -42,3 +42,18 @@ export async function marcarComoLidaEDigitando(messageId: string): Promise<void>
     // Não é crítico — ignora falha silenciosamente.
   }
 }
+
+// Baixa uma mídia recebida (foto etc.) a partir do media-id do webhook. A Cloud API funciona em
+// dois passos: primeiro resolve o media-id para uma URL temporária assinada, depois baixa os bytes
+// dessa URL — as duas chamadas exigem o mesmo Bearer token do sistema. Usamos URLs absolutas (o
+// axios ignora a baseURL da instância `meta`, que aponta para o phone-number-id) já que o endpoint
+// de mídia vive um nível acima na árvore da Graph API.
+export async function baixarMidia(mediaId: string): Promise<{ buffer: Buffer; mimeType: string }> {
+  const { data: info } = await meta.get<{ url: string; mime_type: string }>(
+    `https://graph.facebook.com/${API_VERSION}/${mediaId}`,
+  );
+
+  const { data } = await meta.get<ArrayBuffer>(info.url, { responseType: 'arraybuffer' });
+
+  return { buffer: Buffer.from(data), mimeType: info.mime_type };
+}

@@ -13,7 +13,7 @@
 
 import crypto from 'crypto';
 import express, { Request, Response } from 'express';
-import { handleMessage } from '../services/conversation';
+import { handleMessage, handleImageMessage } from '../services/conversation';
 import * as waha from '../services/waha';
 import * as meta from '../services/meta';
 
@@ -51,17 +51,18 @@ function assinaturaMetaValida(req: Request): boolean {
   return crypto.timingSafeEqual(bufAssinatura, bufEsperada);
 }
 
-interface ProcessarMensagemParams {
+interface ProcessarEventoParams {
   celular: string;
-  texto: string;
   marcarDigitando: () => Promise<void>;
   enviarResposta: (texto: string) => Promise<void>;
+  // Decide como interpretar a mensagem (texto ou imagem) — já retorna a resposta pronta para enviar.
+  processar: () => Promise<string>;
 }
 
-async function processarMensagem({ celular, texto, marcarDigitando, enviarResposta }: ProcessarMensagemParams): Promise<void> {
+async function processarEvento({ celular, marcarDigitando, enviarResposta, processar }: ProcessarEventoParams): Promise<void> {
   try {
     await marcarDigitando();
-    const resposta = await handleMessage({ celular, texto });
+    const resposta = await processar();
     if (resposta) await enviarResposta(resposta);
   } catch (err: any) {
     console.error(`Erro ao processar mensagem de ${celular}:`, err.message);
@@ -87,15 +88,23 @@ async function handleWaha(req: Request, res: Response): Promise<void> {
   if (event !== 'message' || !payload) return;
   if (payload.fromMe) return; // ignora mensagens enviadas pelo próprio número do bot
   if (!payload.from || payload.from.endsWith('@g.us')) return; // ignora grupos
-  if (!payload.body || !payload.body.trim()) return; // ignora mídia sem legenda, figurinhas etc.
 
   const celular = waha.extrairCelular(payload.from);
+  const ehImagem = payload.hasMedia && typeof payload.media?.mimetype === 'string' && payload.media.mimetype.startsWith('image/');
 
-  await processarMensagem({
+  if (!ehImagem && (!payload.body || !payload.body.trim())) return; // ignora figurinhas, áudio, mídia sem legenda etc.
+
+  await processarEvento({
     celular,
-    texto: payload.body.trim(),
     marcarDigitando: () => waha.marcarComoDigitando(celular),
     enviarResposta: (texto) => waha.enviarTexto(celular, texto),
+    processar: async () => {
+      if (ehImagem) {
+        const buffer = await waha.baixarMidia(payload.media.url);
+        return handleImageMessage({ celular, buffer, mimeType: payload.media.mimetype });
+      }
+      return handleMessage({ celular, texto: payload.body.trim() });
+    },
   });
 }
 
@@ -112,17 +121,23 @@ async function handleMeta(req: Request, res: Response): Promise<void> {
   const mensagem = valor?.messages?.[0];
 
   if (!mensagem) return; // status de entrega/leitura etc. — não é mensagem nova
-  if (mensagem.type !== 'text') return; // ignora mídia, figurinhas etc.
+  if (mensagem.type !== 'text' && mensagem.type !== 'image') return; // ignora áudio, figurinhas etc.
 
   const celular = mensagem.from;
-  const texto = mensagem.text?.body?.trim();
-  if (!texto) return;
 
-  await processarMensagem({
+  if (mensagem.type === 'text' && !mensagem.text?.body?.trim()) return;
+
+  await processarEvento({
     celular,
-    texto,
     marcarDigitando: () => meta.marcarComoLidaEDigitando(mensagem.id),
     enviarResposta: (resposta) => meta.enviarTexto(celular, resposta),
+    processar: async () => {
+      if (mensagem.type === 'image') {
+        const { buffer, mimeType } = await meta.baixarMidia(mensagem.image.id);
+        return handleImageMessage({ celular, buffer, mimeType });
+      }
+      return handleMessage({ celular, texto: mensagem.text.body.trim() });
+    },
   });
 }
 

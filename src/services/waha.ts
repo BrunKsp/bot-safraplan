@@ -44,4 +44,11 @@ async function marcarComoDigitando(celular: string): Promise<void> {
   }
 }
 
-export { enviarTexto, marcarComoDigitando, paraChatId, extrairCelular };
+// Baixa uma mídia recebida (foto etc.) a partir da URL que a própria WAHA expõe no payload do
+// webhook (payload.media.url) — a WAHA já proxeia o arquivo, autenticado com a mesma X-Api-Key.
+async function baixarMidia(mediaUrl: string): Promise<Buffer> {
+  const { data } = await waha.get<ArrayBuffer>(mediaUrl, { responseType: 'arraybuffer' });
+  return Buffer.from(data);
+}
+
+export { enviarTexto, marcarComoDigitando, paraChatId, extrairCelular, baixarMidia };

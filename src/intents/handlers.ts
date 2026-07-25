@@ -47,6 +47,7 @@ async function registrarDespesa(sessao: SessaoWhatsapp, campos: CamposExtraidos)
     valor: campos.valor,
     data: campos.data || hojeISO(),
     formaPagamento: campos.formaPagamento || 'OUTRO',
+    anexoUrl: campos.anexoUrl,
   });
 
   return {
