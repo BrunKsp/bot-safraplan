@@ -424,7 +424,7 @@ async function classificarImagemComNvidia(base64: string, mimeType: string): Pro
 
   const response = await client.chat.completions.create({
     model: process.env.NVIDIA_VISION_MODEL || 'meta/llama-3.2-11b-vision-instruct',
-    max_tokens: 500,
+    max_tokens: 1000,
     messages: [
       { role: 'system', content: `${buildImageSystemPrompt(hojeISO())}\n\n${buildImageJsonInstructions()}` },
       {
@@ -438,6 +438,8 @@ async function classificarImagemComNvidia(base64: string, mimeType: string): Pro
   });
 
   const texto = response.choices[0]?.message?.content?.trim();
+  const finishReason = response.choices[0]?.finish_reason;
+  console.log(`[classificarImagemComNvidia] finish_reason=${finishReason} texto=${JSON.stringify(texto)}`);
   if (!texto) return NAO_ENTENDI_FALLBACK;
 
   return extrairJsonDaResposta(texto);
