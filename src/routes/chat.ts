@@ -14,7 +14,7 @@ import express, { Request, Response } from 'express';
 import autenticarCliente from '../middlewares/autenticarCliente';
 import * as session from '../services/session';
 import * as history from '../services/history';
-import { handleMessage } from '../services/conversation';
+import { handleMessage, handleImageMessage } from '../services/conversation';
 import { gerarInsightsDoMes } from '../services/insights';
 import { SessaoWhatsapp } from '../database/entities/SessaoWhatsapp';
 
@@ -77,6 +77,29 @@ router.post('/mensagem', async (req: Request, res: Response) => {
   } catch (err: any) {
     console.error(`Erro ao processar mensagem direta de ${sessao.celular}:`, err.response?.data || err.message);
     res.status(500).json({ erro: 'Tive um problema para processar essa mensagem agora. Tenta de novo em instantes?' });
+  }
+});
+
+// Mesmo caminho de imagem do WhatsApp (classifica com IA de visão + sobe pro R2 em paralelo),
+// só que disparado pelo chat web em vez de uma foto recebida via Meta/WAHA. `imagemBase64` vem
+// sem o prefixo "data:...;base64,".
+router.post('/imagem', async (req: Request, res: Response) => {
+  const { celular, imagemBase64, mimeType } = req.body || {};
+
+  if (!imagemBase64 || !mimeType) {
+    return res.status(400).json({ erro: 'Informe imagemBase64 e mimeType no corpo da requisição.' });
+  }
+
+  const sessao = await resolverSessaoAutorizada(req, res, celular);
+  if (!sessao) return;
+
+  try {
+    const buffer = Buffer.from(imagemBase64, 'base64');
+    const resposta = await handleImageMessage({ celular: sessao.celular, buffer, mimeType });
+    res.json({ resposta });
+  } catch (err: any) {
+    console.error(`Erro ao processar imagem direta de ${sessao.celular}:`, err.response?.data || err.message);
+    res.status(500).json({ erro: 'Tive um problema para analisar essa imagem agora. Tenta de novo em instantes?' });
   }
 });
 

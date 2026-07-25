@@ -23,7 +23,9 @@ app.use(cors({ origin: origensPermitidas ?? true }));
 
 // Guarda o body cru (antes do parse) — necessário para validar a assinatura HMAC (X-Hub-Signature-256)
 // que a Meta envia em cada chamada de webhook.
+// Limite elevado para 15mb porque POST /chat/imagem recebe a foto em base64 no corpo JSON.
 app.use(express.json({
+  limit: '15mb',
   verify: (req, _res, buf) => {
     (req as any).rawBody = buf;
   },
@@ -42,7 +44,7 @@ async function start() {
   app.listen(PORT, () => {
     console.log(`bot-safraplan rodando na porta ${PORT}`);
     console.log(`Webhook do WhatsApp (${process.env.WHATSAPP_PROVIDER || 'meta'}): GET/POST /webhook/whatsapp`);
-    console.log(`Chat direto: POST /chat/mensagem, POST /chat/insights`);
+    console.log(`Chat direto: POST /chat/mensagem, POST /chat/imagem, POST /chat/insights`);
     console.log(`Health check: GET /health`);
   });
 }
