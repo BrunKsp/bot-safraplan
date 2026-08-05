@@ -20,6 +20,25 @@ export interface ResultadoIntencao {
 const moeda = (valor?: number) => Number(valor || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const hojeISO = () => new Date().toISOString().slice(0, 10);
 
+// Horário de Brasília, independente do fuso do servidor (Render roda em UTC).
+function saudacaoPorHorario(): string {
+  const hora = Number(new Date().toLocaleString('en-US', { timeZone: 'America/Sao_Paulo', hour: '2-digit', hour12: false }));
+  if (hora >= 5 && hora < 12) return 'Bom dia';
+  if (hora >= 12 && hora < 18) return 'Boa tarde';
+  return 'Boa noite';
+}
+
+// Cumprimenta pelo primeiro nome do cliente (vindo da sessão, resolvida no login por celular) em
+// vez de deixar a IA gerar uma saudação genérica sem saber quem é o produtor.
+async function saudacao(sessao: SessaoWhatsapp): Promise<ResultadoIntencao> {
+  const primeiroNome = sessao.nome?.trim().split(' ')[0];
+  const nomePart = primeiroNome ? `, ${primeiroNome}` : '';
+
+  return {
+    resposta: `${saudacaoPorHorario()}${nomePart}! Eu sou o SafraBot, seu assistente financeiro do SafraPlan. 🌱\nMe conta o que você quer registrar (despesa, conta a pagar/receber, venda) ou consultar (resumo, preços de mercado).`,
+  };
+}
+
 async function resolverFazendaOuPerguntar(sessao: SessaoWhatsapp, campos: CamposExtraidos): Promise<ResultadoIntencao & { fazenda?: backendClient.Fazenda }> {
   const resultado = await resolverFazenda(sessao, sessao.token, campos.fazenda);
 
@@ -179,10 +198,11 @@ const HANDLERS: Record<string, (sessao: SessaoWhatsapp, campos: CamposExtraidos)
   CONSULTAR_RESUMO: consultarResumo,
   CONSULTAR_CONTAS_PAGAR: consultarContasPagar,
   CONSULTAR_PRECOS_MERCADO: consultarPrecosMercado,
+  SAUDACAO: saudacao,
 };
 
-// Executa o handler da intenção. Intenções sem handler (SAUDACAO, AJUDA, NAO_ENTENDI) usam
-// diretamente o campo `resposta` que a própria IA já preencheu.
+// Executa o handler da intenção. Intenções sem handler (AJUDA, NAO_ENTENDI) usam diretamente o
+// campo `resposta` que a própria IA já preencheu.
 // Erros de chamada ao backend-safraplan propagam de propósito — quem decide se tenta de novo
 // (ex: token expirado) ou desiste é o orquestrador (conversation.js).
 export async function tratarIntencao(sessao: SessaoWhatsapp, campos: CamposExtraidos): Promise<ResultadoIntencao> {
