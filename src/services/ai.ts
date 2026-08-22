@@ -160,7 +160,7 @@ async function gerarInsightsComNvidia(resumo: ResumoFinanceiro): Promise<Insight
   });
 
   const response = await client.chat.completions.create({
-    model: process.env.NVIDIA_MODEL || 'deepseek-ai/deepseek-v4-pro',
+    model: process.env.NVIDIA_MODEL || 'deepseek-ai/deepseek-v4-flash-0731',
     messages: [
       { role: 'system', content: buildInsightsSystemPrompt() },
       { role: 'user', content: JSON.stringify(resumo) },
@@ -249,7 +249,7 @@ async function extrairComNvidia(historico: MensagemHistorico[], mensagem: string
   });
 
   const response = await client.chat.completions.create({
-    model: process.env.NVIDIA_MODEL || 'deepseek-ai/deepseek-v4-pro',
+    model: process.env.NVIDIA_MODEL || 'deepseek-ai/deepseek-v4-flash-0731',
     messages: [
       { role: 'system', content: buildSystemPrompt(hojeISO()) },
       ...historico,

@@ -106,6 +106,14 @@ export async function gerarInsightsDoMes(sessao: SessaoWhatsapp): Promise<{ insi
     return { insights: ['Ainda não há despesas registradas neste mês para gerar insights.'], resumo };
   }
 
-  const { insights } = await gerarInsights(resumo);
-  return { insights, resumo };
+  try {
+    const { insights } = await gerarInsights(resumo);
+    return { insights, resumo };
+  } catch (err: any) {
+    // Números já calculados continuam válidos mesmo se a IA falhar ao transformá-los em frases
+    // (modelo descontinuado, rate limit, instabilidade) — melhor devolver o resumo sem frases do
+    // que derrubar a requisição inteira com 500.
+    console.error('Erro ao gerar frases de insights via IA:', err.response?.data || err.message);
+    return { insights: [], resumo };
+  }
 }
