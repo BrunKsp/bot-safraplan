@@ -11,6 +11,23 @@ import { SessaoWhatsapp } from '../database/entities/SessaoWhatsapp';
 const MENSAGEM_SEM_CADASTRO =
   'Não encontrei nenhuma conta SafraPlan vinculada a este número. Cadastre-se no aplicativo usando este mesmo número de WhatsApp e me chame de novo depois. 🌱';
 
+const FALHA_IA: CamposExtraidos = {
+  intent: 'NAO_ENTENDI',
+  resposta: 'Tive um problema para entender sua mensagem agora. Tenta de novo em instantes?',
+};
+
+// A chamada ao provedor de IA (OpenAI/Anthropic/NVIDIA) é a parte mais sujeita a falhar sem
+// aviso (modelo descontinuado, rate limit, instabilidade de rede) — sem isso, qualquer erro aqui
+// derrubava a requisição inteira com um 500 genérico em vez de uma resposta conversacional.
+async function extrairComFallback(fn: () => Promise<CamposExtraidos>, celular: string): Promise<CamposExtraidos> {
+  try {
+    return await fn();
+  } catch (err: any) {
+    console.error(`Erro ao chamar IA para ${celular}:`, err.response?.data || err.message);
+    return FALHA_IA;
+  }
+}
+
 // Roda `fn(sessao)` e, se o backend responder 401 (token expirado), tenta autenticar de novo
 // pelo celular (login por celular não depende de senha, então dá pra renovar automaticamente)
 // e roda uma única vez mais.
@@ -69,7 +86,7 @@ export async function handleMessage({ celular, texto }: { celular: string; texto
     campos = { ...camposAnteriores, [perguntando]: texto.trim() } as unknown as CamposExtraidos;
   } else {
     const historico = await history.getRecentHistory(celular);
-    campos = await extrairIntencao(historico, texto);
+    campos = await extrairComFallback(() => extrairIntencao(historico, texto), celular);
   }
 
   return processarCampos(sessao, celular, campos);
@@ -94,7 +111,7 @@ export async function handleImageMessage({
   const base64 = buffer.toString('base64');
 
   const [campos, anexoUrl] = await Promise.all([
-    classificarImagem(base64, mimeType),
+    extrairComFallback(() => classificarImagem(base64, mimeType), celular),
     storage.uploadImagem(buffer, celular, mimeType).catch((err) => {
       console.error(`Erro ao subir imagem para o R2 (${celular}):`, err.message);
       return undefined;
