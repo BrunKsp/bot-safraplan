@@ -8,9 +8,28 @@ dotenv.config();
 
 import express from 'express';
 import cors from 'cors';
+import axios from 'axios';
 import { AppDataSource } from './database/data-source';
 import webhookRouter from './routes/webhook';
 import chatRouter from './routes/chat';
+
+const KEEP_ALIVE_INTERVAL_MS = 2 * 60 * 60 * 1000; // 2h — não evita a hibernação (15 min de ociosidade já é suficiente pro Render dormir), só reduz quanto tempo o serviço fica de fato acordado, pra não estourar o limite de horas do plano free.
+
+// Ping periódico só pra reduzir o tempo total dormindo entre usos esporádicos — NÃO mantém o bot
+// sempre acordado (isso consumiria as horas do plano free rápido demais). O cold start de
+// 30-60s+ na primeira mensagem depois de um tempo parado continua acontecendo normalmente.
+// RENDER_EXTERNAL_URL é definida automaticamente pelo Render em serviços web; sem ela (dev local),
+// o ping simplesmente não roda.
+function iniciarKeepAlive(): void {
+  const url = process.env.RENDER_EXTERNAL_URL;
+  if (!url) return;
+
+  setInterval(() => {
+    axios.get(`${url}/health`, { timeout: 15_000 }).catch(() => {
+      // Não é crítico — só uma tentativa de manter o serviço acordado, uma falha ocasional é ok.
+    });
+  }, KEEP_ALIVE_INTERVAL_MS);
+}
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -46,6 +65,7 @@ async function start() {
     console.log(`Webhook do WhatsApp (${process.env.WHATSAPP_PROVIDER || 'meta'}): GET/POST /webhook/whatsapp`);
     console.log(`Chat direto: POST /chat/mensagem, POST /chat/imagem, POST /chat/insights`);
     console.log(`Health check: GET /health`);
+    iniciarKeepAlive();
   });
 }
 

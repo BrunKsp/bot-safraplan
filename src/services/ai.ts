@@ -153,23 +153,33 @@ async function gerarInsightsComOpenAI(resumo: ResumoFinanceiro): Promise<Insight
   return JSON.parse(toolCall.function.arguments);
 }
 
+// Loga duração + retorno bruto de cada chamada à API da NVIDIA — útil pra diagnosticar sem
+// precisar reproduzir o caso (o resumo/mensagem em si não é logado, só a resposta do modelo).
+function logChamadaNvidia(label: string, inicioMs: number, response: OpenAI.Chat.Completions.ChatCompletion): void {
+  const duracaoMs = Date.now() - inicioMs;
+  const escolha = response.choices[0];
+  console.log(
+    `[nvidia:${label}] duracaoMs=${duracaoMs} model=${response.model} finish_reason=${escolha?.finish_reason} usage=${JSON.stringify(response.usage)} message=${JSON.stringify(escolha?.message)}`
+  );
+}
+
 async function gerarInsightsComNvidia(resumo: ResumoFinanceiro): Promise<Insights> {
   const client = new OpenAI({
     apiKey: process.env.NVIDIA_API_KEY,
     baseURL: 'https://integrate.api.nvidia.com/v1',
   });
 
+  const inicioMs = Date.now();
   const response = await client.chat.completions.create({
-    model: process.env.NVIDIA_MODEL || 'deepseek-ai/deepseek-v4-flash-0731',
+    model: process.env.NVIDIA_MODEL || 'meta/llama-3.3-70b-instruct',
     messages: [
-      { role: 'system', content: buildInsightsSystemPrompt() },
+      { role: 'system', content: buildInsightsSystemPrompt() + '\n\nReasoning strength: low' },
       { role: 'user', content: JSON.stringify(resumo) },
     ],
     tools: [{ type: 'function', function: { name: 'gerar_insights', description: 'Registra os insights financeiros gerados.', parameters: INSIGHTS_PARAMETROS } }],
     tool_choice: { type: 'function', function: { name: 'gerar_insights' } },
-    // @ts-expect-error -- extensão específica da NVIDIA NIM, fora do SDK oficial da OpenAI.
-    chat_template_kwargs: { thinking: false },
   });
+  logChamadaNvidia('gerarInsights', inicioMs, response);
 
   const toolCall = response.choices[0].message.tool_calls?.[0];
   if (!toolCall || toolCall.type !== 'function') return { insights: [] };
@@ -240,18 +250,28 @@ async function extrairComOpenAI(historico: MensagemHistorico[], mensagem: string
   return JSON.parse(toolCall.function.arguments);
 }
 
-// Modelos NVIDIA NIM (ex: DeepSeek) expõem "chat_template_kwargs.thinking" para desligar o
-// modo de raciocínio — queremos isso desligado aqui pra ter tool-calling determinístico e rápido.
 async function extrairComNvidia(historico: MensagemHistorico[], mensagem: string): Promise<CamposExtraidos> {
   const client = new OpenAI({
     apiKey: process.env.NVIDIA_API_KEY,
     baseURL: 'https://integrate.api.nvidia.com/v1',
   });
 
+  // Nem todo modelo do NIM honra "tool_choice" de forma consistente (alguns respondem em texto
+  // solto mesmo forçado a chamar a ferramenta) — a instrução extra abaixo é uma rede de segurança
+  // pro caso disso acontecer, pra ainda dar pra extrair algo em vez de cair direto em NAO_ENTENDI.
+  const instrucaoFallback = '\n\nSe por qualquer motivo você não conseguir chamar a ferramenta "interpretar_mensagem", responda com o mesmo JSON que passaria pra ela, e nada mais (sem texto explicativo, sem markdown).';
+
+  // Modelos "reasoning" do NIM (ex: Muse Glimmer) controlam o quanto pensam antes de responder
+  // via uma linha "Reasoning strength: <nível>" no system prompt, não um parâmetro separado da
+  // API — "low" é suficiente pra uma extração estruturada simples e evita raciocínio longo (que
+  // em teste chegou a levar mais de 1 minuto numa única chamada).
+  const instrucaoReasoning = '\n\nReasoning strength: low';
+
+  const inicioMs = Date.now();
   const response = await client.chat.completions.create({
-    model: process.env.NVIDIA_MODEL || 'deepseek-ai/deepseek-v4-flash-0731',
+    model: process.env.NVIDIA_MODEL || 'meta/llama-3.3-70b-instruct',
     messages: [
-      { role: 'system', content: buildSystemPrompt(hojeISO()) },
+      { role: 'system', content: buildSystemPrompt(hojeISO()) + instrucaoFallback + instrucaoReasoning },
       ...historico,
       { role: 'user', content: mensagem },
     ],
@@ -266,14 +286,16 @@ async function extrairComNvidia(historico: MensagemHistorico[], mensagem: string
       },
     ],
     tool_choice: { type: 'function', function: { name: 'interpretar_mensagem' } },
-    // @ts-expect-error -- extensão específica da NVIDIA NIM, fora do SDK oficial da OpenAI.
-    chat_template_kwargs: { thinking: false },
   });
+  logChamadaNvidia('extrairIntencao', inicioMs, response);
 
   const toolCall = response.choices[0].message.tool_calls?.[0];
-  if (!toolCall || toolCall.type !== 'function') return NAO_ENTENDI_FALLBACK;
+  if (toolCall && toolCall.type === 'function') {
+    return JSON.parse(toolCall.function.arguments);
+  }
 
-  return JSON.parse(toolCall.function.arguments);
+  const texto = response.choices[0].message.content;
+  return texto ? extrairJsonDaResposta(texto) : NAO_ENTENDI_FALLBACK;
 }
 
 async function extrairComClaude(historico: MensagemHistorico[], mensagem: string): Promise<CamposExtraidos> {
@@ -445,8 +467,9 @@ async function classificarImagemComNvidia(base64: string, mimeType: string): Pro
     baseURL: 'https://integrate.api.nvidia.com/v1',
   });
 
+  const inicioMs = Date.now();
   const response = await client.chat.completions.create({
-    model: process.env.NVIDIA_VISION_MODEL || 'meta/llama-3.2-11b-vision-instruct',
+    model: process.env.NVIDIA_VISION_MODEL || 'nvidia/llama-3.1-nemotron-nano-vl-8b-v1',
     max_tokens: 1000,
     messages: [
       { role: 'system', content: `${buildImageSystemPrompt(hojeISO())}\n\n${buildImageJsonInstructions()}` },
@@ -459,10 +482,9 @@ async function classificarImagemComNvidia(base64: string, mimeType: string): Pro
       },
     ],
   });
+  logChamadaNvidia('classificarImagem', inicioMs, response);
 
   const texto = response.choices[0]?.message?.content?.trim();
-  const finishReason = response.choices[0]?.finish_reason;
-  console.log(`[classificarImagemComNvidia] finish_reason=${finishReason} texto=${JSON.stringify(texto)}`);
   if (!texto) return NAO_ENTENDI_FALLBACK;
 
   return extrairJsonDaResposta(texto);
