@@ -1,5 +1,5 @@
 // Camada de IA: transforma a mensagem em texto livre do produtor em uma intenção estruturada.
-// Usa OpenAI, Anthropic ou NVIDIA NIM dependendo de AI_PROVIDER (mesmo padrão do chat-bot do Instagram).
+// Usa OpenAI, Anthropic, NVIDIA NIM ou OpenRouter dependendo de AI_PROVIDER (mesmo padrão do chat-bot do Instagram).
 //
 // A IA sempre "chama uma ferramenta" (function/tool calling) em vez de responder em texto livre —
 // isso garante que a saída seja sempre um JSON previsível que o restante do bot sabe processar.
@@ -153,13 +153,14 @@ async function gerarInsightsComOpenAI(resumo: ResumoFinanceiro): Promise<Insight
   return JSON.parse(toolCall.function.arguments);
 }
 
-// Loga duração + retorno bruto de cada chamada à API da NVIDIA — útil pra diagnosticar sem
-// precisar reproduzir o caso (o resumo/mensagem em si não é logado, só a resposta do modelo).
-function logChamadaNvidia(label: string, inicioMs: number, response: OpenAI.Chat.Completions.ChatCompletion): void {
+// Loga duração + retorno bruto de cada chamada a um provedor compatível com a API da OpenAI
+// (NVIDIA NIM, OpenRouter) — útil pra diagnosticar sem precisar reproduzir o caso (o
+// resumo/mensagem em si não é logado, só a resposta do modelo).
+function logChamadaCompativelOpenAI(label: string, inicioMs: number, response: OpenAI.Chat.Completions.ChatCompletion): void {
   const duracaoMs = Date.now() - inicioMs;
   const escolha = response.choices[0];
   console.log(
-    `[nvidia:${label}] duracaoMs=${duracaoMs} model=${response.model} finish_reason=${escolha?.finish_reason} usage=${JSON.stringify(response.usage)} message=${JSON.stringify(escolha?.message)}`
+    `[ia:${label}] duracaoMs=${duracaoMs} model=${response.model} finish_reason=${escolha?.finish_reason} usage=${JSON.stringify(response.usage)} message=${JSON.stringify(escolha?.message)}`
   );
 }
 
@@ -179,7 +180,30 @@ async function gerarInsightsComNvidia(resumo: ResumoFinanceiro): Promise<Insight
     tools: [{ type: 'function', function: { name: 'gerar_insights', description: 'Registra os insights financeiros gerados.', parameters: INSIGHTS_PARAMETROS } }],
     tool_choice: { type: 'function', function: { name: 'gerar_insights' } },
   });
-  logChamadaNvidia('gerarInsights', inicioMs, response);
+  logChamadaCompativelOpenAI('gerarInsights', inicioMs, response);
+
+  const toolCall = response.choices[0].message.tool_calls?.[0];
+  if (!toolCall || toolCall.type !== 'function') return { insights: [] };
+  return JSON.parse(toolCall.function.arguments);
+}
+
+async function gerarInsightsComOpenRouter(resumo: ResumoFinanceiro): Promise<Insights> {
+  const client = new OpenAI({
+    apiKey: process.env.OPENROUTER_API_KEY,
+    baseURL: 'https://openrouter.ai/api/v1',
+  });
+
+  const inicioMs = Date.now();
+  const response = await client.chat.completions.create({
+    model: process.env.OPENROUTER_MODEL || 'openrouter/free',
+    messages: [
+      { role: 'system', content: buildInsightsSystemPrompt() },
+      { role: 'user', content: JSON.stringify(resumo) },
+    ],
+    tools: [{ type: 'function', function: { name: 'gerar_insights', description: 'Registra os insights financeiros gerados.', parameters: INSIGHTS_PARAMETROS } }],
+    tool_choice: { type: 'function', function: { name: 'gerar_insights' } },
+  });
+  logChamadaCompativelOpenAI('gerarInsights:openrouter', inicioMs, response);
 
   const toolCall = response.choices[0].message.tool_calls?.[0];
   if (!toolCall || toolCall.type !== 'function') return { insights: [] };
@@ -214,6 +238,10 @@ export async function gerarInsights(resumo: ResumoFinanceiro): Promise<Insights>
 
   if (provider === 'nvidia') {
     return gerarInsightsComNvidia(resumo);
+  }
+
+  if (provider === 'openrouter') {
+    return gerarInsightsComOpenRouter(resumo);
   }
 
   return gerarInsightsComOpenAI(resumo);
@@ -287,7 +315,48 @@ async function extrairComNvidia(historico: MensagemHistorico[], mensagem: string
     ],
     tool_choice: { type: 'function', function: { name: 'interpretar_mensagem' } },
   });
-  logChamadaNvidia('extrairIntencao', inicioMs, response);
+  logChamadaCompativelOpenAI('extrairIntencao', inicioMs, response);
+
+  const toolCall = response.choices[0].message.tool_calls?.[0];
+  if (toolCall && toolCall.type === 'function') {
+    return JSON.parse(toolCall.function.arguments);
+  }
+
+  const texto = response.choices[0].message.content;
+  return texto ? extrairJsonDaResposta(texto) : NAO_ENTENDI_FALLBACK;
+}
+
+async function extrairComOpenRouter(historico: MensagemHistorico[], mensagem: string): Promise<CamposExtraidos> {
+  const client = new OpenAI({
+    apiKey: process.env.OPENROUTER_API_KEY,
+    baseURL: 'https://openrouter.ai/api/v1',
+  });
+
+  // Nem todo modelo grátis do roteador honra "tool_choice" de forma consistente — mesma rede de
+  // segurança usada na NVIDIA: se não vier tool_call, tenta extrair um JSON do texto puro.
+  const instrucaoFallback = '\n\nSe por qualquer motivo você não conseguir chamar a ferramenta "interpretar_mensagem", responda com o mesmo JSON que passaria pra ela, e nada mais (sem texto explicativo, sem markdown).';
+
+  const inicioMs = Date.now();
+  const response = await client.chat.completions.create({
+    model: process.env.OPENROUTER_MODEL || 'openrouter/free',
+    messages: [
+      { role: 'system', content: buildSystemPrompt(hojeISO()) + instrucaoFallback },
+      ...historico,
+      { role: 'user', content: mensagem },
+    ],
+    tools: [
+      {
+        type: 'function',
+        function: {
+          name: 'interpretar_mensagem',
+          description: 'Registra a intenção estruturada extraída da mensagem do produtor.',
+          parameters: PARAMETROS,
+        },
+      },
+    ],
+    tool_choice: { type: 'function', function: { name: 'interpretar_mensagem' } },
+  });
+  logChamadaCompativelOpenAI('extrairIntencao:openrouter', inicioMs, response);
 
   const toolCall = response.choices[0].message.tool_calls?.[0];
   if (toolCall && toolCall.type === 'function') {
@@ -333,6 +402,10 @@ export async function extrairIntencao(historico: MensagemHistorico[], mensagem: 
 
   if (provider === 'nvidia') {
     return extrairComNvidia(historico, mensagem);
+  }
+
+  if (provider === 'openrouter') {
+    return extrairComOpenRouter(historico, mensagem);
   }
 
   return extrairComOpenAI(historico, mensagem);
@@ -482,7 +555,36 @@ async function classificarImagemComNvidia(base64: string, mimeType: string): Pro
       },
     ],
   });
-  logChamadaNvidia('classificarImagem', inicioMs, response);
+  logChamadaCompativelOpenAI('classificarImagem', inicioMs, response);
+
+  const texto = response.choices[0]?.message?.content?.trim();
+  if (!texto) return NAO_ENTENDI_FALLBACK;
+
+  return extrairJsonDaResposta(texto);
+}
+
+async function classificarImagemComOpenRouter(base64: string, mimeType: string): Promise<CamposExtraidos> {
+  const client = new OpenAI({
+    apiKey: process.env.OPENROUTER_API_KEY,
+    baseURL: 'https://openrouter.ai/api/v1',
+  });
+
+  const inicioMs = Date.now();
+  const response = await client.chat.completions.create({
+    model: process.env.OPENROUTER_VISION_MODEL || process.env.OPENROUTER_MODEL || 'openrouter/free',
+    max_tokens: 1000,
+    messages: [
+      { role: 'system', content: `${buildImageSystemPrompt(hojeISO())}\n\n${buildImageJsonInstructions()}` },
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'Analise esta imagem e extraia os dados financeiros.' },
+          { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64}` } },
+        ],
+      },
+    ],
+  });
+  logChamadaCompativelOpenAI('classificarImagem:openrouter', inicioMs, response);
 
   const texto = response.choices[0]?.message?.content?.trim();
   if (!texto) return NAO_ENTENDI_FALLBACK;
@@ -515,6 +617,11 @@ async function classificarImagemComProvider(base64: string, mimeType: string): P
   if (provider === 'nvidia') {
     if (!process.env.NVIDIA_API_KEY) return IMAGEM_SEM_PROVEDOR_VISAO;
     return classificarImagemComNvidia(base64, mimeType);
+  }
+
+  if (provider === 'openrouter') {
+    if (!process.env.OPENROUTER_API_KEY) return IMAGEM_SEM_PROVEDOR_VISAO;
+    return classificarImagemComOpenRouter(base64, mimeType);
   }
 
   if (!process.env.OPENAI_API_KEY) return IMAGEM_SEM_PROVEDOR_VISAO;
