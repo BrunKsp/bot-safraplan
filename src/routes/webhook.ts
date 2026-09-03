@@ -1,9 +1,18 @@
-// Rota que recebe os eventos do WhatsApp — via WAHA (dev local) ou API oficial da Meta (produção),
-// dependendo de WHATSAPP_PROVIDER ('waha' | 'meta', default 'meta').
+// Rota que recebe os eventos do WhatsApp — via WAHA (dev local), Twilio, UAZAPI ou API oficial da
+// Meta (produção), dependendo de WHATSAPP_PROVIDER ('waha' | 'twilio' | 'uazapi' | 'meta', default 'meta').
 //
 // WAHA: configure o webhook da WAHA como
 //   http://bot:3000/webhook/whatsapp?token=SEU_WEBHOOK_SECRET
 // (feito automaticamente pelo docker-compose.yml em dev)
+//
+// Twilio: configure no console da Twilio (Messaging > WhatsApp Senders > seu número > Webhook):
+//   "WHEN A MESSAGE COMES IN": https://SEU-BOT.onrender.com/webhook/whatsapp (método POST)
+// A Twilio assina cada POST com o header X-Twilio-Signature — validamos essa assinatura em
+// twilio.assinaturaValida() usando TWILIO_AUTH_TOKEN.
+//
+// UAZAPI: configure em POST {UAZAPI_SERVER_URL}/webhook (painel ou API), evento "messages", url:
+//   https://SEU-BOT.onrender.com/webhook/whatsapp?token=SEU_WEBHOOK_SECRET
+// A UAZAPI não assina o payload — a segurança é só o token na query string (mesmo esquema da WAHA).
 //
 // Meta: configure no painel do Meta for Developers (WhatsApp > Configuration > Webhook):
 //   Callback URL: https://SEU-BOT.onrender.com/webhook/whatsapp
@@ -16,6 +25,8 @@ import express, { Request, Response } from 'express';
 import { handleMessage, handleImageMessage } from '../services/conversation';
 import * as waha from '../services/waha';
 import * as meta from '../services/meta';
+import * as twilio from '../services/twilio';
+import * as uazapi from '../services/uazapi';
 
 const router = express.Router();
 
@@ -141,8 +152,81 @@ async function handleMeta(req: Request, res: Response): Promise<void> {
   });
 }
 
+async function handleTwilio(req: Request, res: Response): Promise<void> {
+  const url = `${req.protocol}://${req.get('host')}${req.originalUrl}`;
+  if (!twilio.assinaturaValida(req.get('X-Twilio-Signature'), url, req.body)) {
+    res.sendStatus(403);
+    return;
+  }
+
+  // A Twilio espera uma resposta TwiML (pode ser vazia) rapidamente — processa a mensagem depois.
+  res.type('text/xml').send('<Response></Response>');
+
+  const from = req.body?.From;
+  if (!from) return; // status de entrega/leitura etc. — não é mensagem nova
+
+  const celular = twilio.extrairCelular(from);
+  const corpo = (req.body?.Body || '').trim();
+  const numMedia = Number(req.body?.NumMedia || 0);
+  const mimeType = req.body?.MediaContentType0;
+  const ehImagem = numMedia > 0 && typeof mimeType === 'string' && mimeType.startsWith('image/');
+
+  if (!ehImagem && !corpo) return; // ignora figurinhas, áudio, mídia sem legenda etc.
+
+  await processarEvento({
+    celular,
+    marcarDigitando: () => twilio.marcarComoDigitando(celular),
+    enviarResposta: (texto) => twilio.enviarTexto(celular, texto),
+    processar: async () => {
+      if (ehImagem) {
+        const buffer = await twilio.baixarMidia(req.body.MediaUrl0);
+        return handleImageMessage({ celular, buffer, mimeType });
+      }
+      return handleMessage({ celular, texto: corpo });
+    },
+  });
+}
+
+async function handleUazapi(req: Request, res: Response): Promise<void> {
+  if (req.query.token !== process.env.WEBHOOK_SECRET) {
+    res.sendStatus(403);
+    return;
+  }
+
+  // A UAZAPI espera uma resposta rápida — processa a mensagem depois de responder.
+  res.sendStatus(200);
+
+  const { event, data } = req.body || {};
+
+  if (event !== 'message' || !data) return; // status de entrega/leitura, presença etc.
+  if (data.fromMe) return; // ignora mensagens enviadas pelo próprio número do bot
+  if (!data.chatid || data.chatid.endsWith('@g.us')) return; // ignora grupos
+
+  const celular = uazapi.extrairCelular(data.chatid);
+  // messageType não tem um enum fechado na documentação da UAZAPI — checar substring é mais
+  // robusto do que tentar acertar o valor exato (ex: "image" vs "imageMessage").
+  const ehImagem = Boolean(data.fileURL) && typeof data.messageType === 'string' && data.messageType.toLowerCase().includes('image');
+
+  if (!ehImagem && !data.text?.trim()) return; // ignora figurinhas, áudio, mídia sem legenda etc.
+
+  await processarEvento({
+    celular,
+    marcarDigitando: () => uazapi.marcarComoDigitando(celular),
+    enviarResposta: (texto) => uazapi.enviarTexto(celular, texto),
+    processar: async () => {
+      if (ehImagem) {
+        const { buffer, mimeType } = await uazapi.baixarMidia(data.messageid);
+        return handleImageMessage({ celular, buffer, mimeType });
+      }
+      return handleMessage({ celular, texto: data.text.trim() });
+    },
+  });
+}
+
 router.post('/whatsapp', (req: Request, res: Response) => {
   if (provider() === 'waha') return handleWaha(req, res);
+  if (provider() === 'twilio') return handleTwilio(req, res);
+  if (provider() === 'uazapi') return handleUazapi(req, res);
   return handleMeta(req, res);
 });
 
