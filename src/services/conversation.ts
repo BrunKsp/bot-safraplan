@@ -4,12 +4,10 @@
 import * as session from './session';
 import * as history from './history';
 import * as storage from './storage';
+import * as onboarding from './onboarding';
 import { extrairIntencao, classificarImagem, CamposExtraidos } from './ai';
 import { tratarIntencao } from '../intents/handlers';
 import { SessaoWhatsapp } from '../database/entities/SessaoWhatsapp';
-
-const MENSAGEM_SEM_CADASTRO =
-  'Não encontrei nenhuma conta SafraPlan vinculada a este número. Cadastre-se no aplicativo usando este mesmo número de WhatsApp e me chame de novo depois. 🌱';
 
 const FALHA_IA: CamposExtraidos = {
   intent: 'NAO_ENTENDI',
@@ -73,8 +71,25 @@ async function processarCampos(sessao: SessaoWhatsapp, celular: string, campos: 
 }
 
 export async function handleMessage({ celular, texto }: { celular: string; texto: string }): Promise<string> {
+  // Cadastro em andamento (respondendo a uma pergunta do onboarding) tem prioridade sobre
+  // qualquer outra coisa — inclusive sobre uma sessão que porventura já exista.
+  const etapaOnboarding = await onboarding.buscarEtapaAtual(celular);
+  if (etapaOnboarding) {
+    // Nunca grava a senha em texto puro no histórico de mensagens.
+    const conteudoHistorico = etapaOnboarding === 'senha' ? '[senha oculta]' : texto;
+    await history.salvarMensagem(celular, 'user', conteudoHistorico);
+    const resposta = await onboarding.processarResposta(celular, texto);
+    await history.salvarMensagem(celular, 'assistant', resposta);
+    return resposta;
+  }
+
   const sessao = await resolverSessao(celular);
-  if (!sessao) return MENSAGEM_SEM_CADASTRO;
+  if (!sessao) {
+    await history.salvarMensagem(celular, 'user', texto);
+    const resposta = await onboarding.iniciar(celular);
+    await history.salvarMensagem(celular, 'assistant', resposta);
+    return resposta;
+  }
 
   await history.salvarMensagem(celular, 'user', texto);
 
@@ -103,8 +118,18 @@ export async function handleImageMessage({
   buffer: Buffer;
   mimeType: string;
 }): Promise<string> {
+  const etapaOnboarding = await onboarding.buscarEtapaAtual(celular);
+  if (etapaOnboarding) {
+    return 'Ainda estou te ajudando a criar sua conta — responde por texto, por favor. 🙂';
+  }
+
   const sessao = await resolverSessao(celular);
-  if (!sessao) return MENSAGEM_SEM_CADASTRO;
+  if (!sessao) {
+    await history.salvarMensagem(celular, 'user', '[foto enviada]');
+    const resposta = await onboarding.iniciar(celular);
+    await history.salvarMensagem(celular, 'assistant', resposta);
+    return resposta;
+  }
 
   await history.salvarMensagem(celular, 'user', '[foto enviada]');
 

@@ -62,6 +62,13 @@ export async function loginPorCelular(celular: string): Promise<LoginResultado |
   }
 }
 
+// Cadastro público (sem token) — usado pelo onboarding conversacional do bot, quando alguém manda
+// mensagem de um número sem conta ainda. Mesmo formato de retorno do login (cliente + token).
+export async function criarCliente(payload: Record<string, unknown>): Promise<LoginResultado> {
+  const { data } = await api.post<LoginResultado>('/clientes', payload);
+  return data;
+}
+
 export async function listarFazendas(token: string): Promise<Fazenda[]> {
   const { data } = await api.get<Fazenda[]>('/fazendas', comToken(token));
   return data;
