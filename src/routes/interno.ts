@@ -51,4 +51,38 @@ router.post('/whatsapp/otp', async (req: Request, res: Response) => {
   }
 });
 
+// Texto livre (avisos diários de cotação/clima etc.) — só funciona em provedores não-oficiais
+// (UAZAPI/WAHA). Twilio/Meta exigem Content Template aprovado pra mensagens fora da janela de
+// 24h de conversa, então mensagens de negócio "avulsas" como essa não são suportadas por eles
+// aqui (ver enviarOtp, que já usa template pra contornar isso no caso do código OTP).
+async function enviarTextoPeloProviderAtivo(celular: string, mensagem: string): Promise<void> {
+  const provider = process.env.WHATSAPP_PROVIDER || 'meta';
+
+  if (provider === 'uazapi') {
+    return uazapi.enviarTexto(celular, mensagem);
+  }
+
+  if (provider === 'waha') {
+    return waha.enviarTexto(celular, mensagem);
+  }
+
+  throw new Error(`Envio de texto livre não suportado para WHATSAPP_PROVIDER=${provider} (exige template aprovado).`);
+}
+
+router.post('/whatsapp/enviar', async (req: Request, res: Response) => {
+  const { celular, mensagem } = req.body || {};
+
+  if (!celular || !mensagem) {
+    return res.status(400).json({ erro: 'Informe celular e mensagem no corpo da requisição.' });
+  }
+
+  try {
+    await enviarTextoPeloProviderAtivo(celular, mensagem);
+    res.json({ enviado: true });
+  } catch (err: any) {
+    console.error(`Erro ao enviar mensagem para ${celular}:`, err.response?.data || err.message);
+    res.status(502).json({ erro: 'Não consegui enviar a mensagem pelo WhatsApp agora.' });
+  }
+});
+
 export default router;
