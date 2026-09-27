@@ -187,6 +187,46 @@ async function handleTwilio(req: Request, res: Response): Promise<void> {
   });
 }
 
+// Formato real do payload da UAZAPI (confirmado contra uma integração já em produção — a
+// documentação pública em docs.uazapi.com descreve outro formato, que nunca bateu com o que a
+// instância de fato manda).
+interface ChatUazapi {
+  phone?: string;
+  wa_chatid?: string;
+  wa_isGroup?: boolean;
+}
+
+interface ConteudoMidiaUazapi {
+  URL: string;
+  mimetype: string;
+  fileSHA256: string;
+  fileEncSHA256: string;
+  fileLength: number;
+  mediaKey: string;
+}
+
+interface MensagemUazapi {
+  messageid?: string;
+  sender_pn?: string;
+  fromMe?: boolean;
+  wasSentByApi?: boolean;
+  isGroup?: boolean;
+  messageType?: string;
+  text?: string;
+  content?: string | ConteudoMidiaUazapi;
+}
+
+interface PayloadUazapi {
+  EventType?: string;
+  chat?: ChatUazapi;
+  message?: MensagemUazapi;
+}
+
+function stripSufixoWhatsapp(valor?: string): string | null {
+  if (!valor) return null;
+  return valor.split('@')[0];
+}
+
 async function handleUazapi(req: Request, res: Response): Promise<void> {
   if (req.query.token !== process.env.WEBHOOK_SECRET) {
     res.sendStatus(403);
@@ -196,23 +236,20 @@ async function handleUazapi(req: Request, res: Response): Promise<void> {
   // A UAZAPI espera uma resposta rápida — processa a mensagem depois de responder.
   res.sendStatus(200);
 
-  const { event, data } = req.body || {};
-  // Log temporário pra confirmar o formato real do payload — os primeiros eventos "message" que
-  // chegaram estavam sendo descartados em silêncio (sem log nenhum) por não bater com o formato
-  // presumido a partir da documentação. Remover depois de confirmar o formato certo.
-  console.log(`[uazapi:webhook] content-type=${req.get('content-type')} rawBody=${req.rawBody?.toString('utf8')}`);
-  console.log(`[uazapi:webhook] event=${event} data=${JSON.stringify(data)}`);
+  const dados = req.body as PayloadUazapi;
+  if (dados?.EventType && dados.EventType !== 'messages') return; // status de entrega/leitura, presença etc.
 
-  if (event !== 'message' || !data) return; // status de entrega/leitura, presença etc.
-  if (data.fromMe) return; // ignora mensagens enviadas pelo próprio número do bot
-  if (!data.chatid || data.chatid.endsWith('@g.us')) return; // ignora grupos
+  const mensagem = dados?.message;
+  if (!mensagem) return;
+  if (mensagem.fromMe || mensagem.wasSentByApi || mensagem.isGroup || dados.chat?.wa_isGroup) return;
 
-  const celular = uazapi.extrairCelular(data.chatid);
-  // messageType não tem um enum fechado na documentação da UAZAPI — checar substring é mais
-  // robusto do que tentar acertar o valor exato (ex: "image" vs "imageMessage").
-  const ehImagem = Boolean(data.fileURL) && typeof data.messageType === 'string' && data.messageType.toLowerCase().includes('image');
+  const celular = stripSufixoWhatsapp(dados.chat?.wa_chatid) ?? dados.chat?.phone ?? stripSufixoWhatsapp(mensagem.sender_pn);
+  if (!celular) return;
 
-  if (!ehImagem && !data.text?.trim()) return; // ignora figurinhas, áudio, mídia sem legenda etc.
+  const textoBruto = mensagem.text ?? (typeof mensagem.content === 'string' ? mensagem.content : undefined);
+  const ehImagem = mensagem.messageType === 'ImageMessage' && typeof mensagem.content === 'object' && !!mensagem.content;
+
+  if (!ehImagem && !textoBruto?.trim()) return; // ignora figurinhas, áudio, mídia sem legenda etc.
 
   await processarEvento({
     celular,
@@ -220,10 +257,10 @@ async function handleUazapi(req: Request, res: Response): Promise<void> {
     enviarResposta: (texto) => uazapi.enviarTexto(celular, texto),
     processar: async () => {
       if (ehImagem) {
-        const { buffer, mimeType } = await uazapi.baixarMidia(data.messageid);
+        const { buffer, mimeType } = await uazapi.baixarMidia(mensagem.messageid ?? '', mensagem.content as ConteudoMidiaUazapi);
         return handleImageMessage({ celular, buffer, mimeType });
       }
-      return handleMessage({ celular, texto: data.text.trim() });
+      return handleMessage({ celular, texto: textoBruto!.trim() });
     },
   });
 }
