@@ -47,3 +47,10 @@ export async function getHistorico(celular: string, limit = 50): Promise<Mensage
 export async function salvarMensagem(celular: string, role: PapelMensagem, content: string): Promise<void> {
   await repo().insert({ celular, role, content });
 }
+
+// Usado ao concluir/cancelar o onboarding — sem isso, as perguntas do cadastro (nome, CPF/CNPJ,
+// etc) continuam entrando no contexto que a IA usa pra extrair intenção das mensagens seguintes,
+// e o modelo passa a "lembrar" de perguntar essas coisas em vez de interpretar despesas normais.
+export async function limparHistorico(celular: string): Promise<void> {
+  await repo().delete({ celular });
+}

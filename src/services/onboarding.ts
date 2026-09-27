@@ -6,6 +6,7 @@ import { AppDataSource } from '../database/data-source';
 import { DadosOnboarding, EtapaOnboarding, OnboardingPendente } from '../database/entities/OnboardingPendente';
 import * as backendClient from './backendClient';
 import * as session from './session';
+import * as history from './history';
 import { decodificarToken } from '../utils/jwt';
 
 const repo = () => AppDataSource.getRepository(OnboardingPendente);
@@ -131,9 +132,14 @@ export async function buscarEtapaAtual(celular: string): Promise<EtapaOnboarding
 
 // Descarta um onboarding em andamento (ou sobra de tentativa antiga) — chamado sempre que uma
 // conta de verdade é resolvida pra esse celular, pra não ficar preso num cadastro que não serve
-// mais pra nada.
+// mais pra nada. Chamado em toda mensagem de quem já tem conta, então só limpa o histórico de
+// mensagens (usado como contexto pela IA) quando realmente havia um onboarding sobrando — senão
+// apagaria o histórico normal de conversa de qualquer cliente já cadastrado, sempre.
 export async function cancelarSeExistir(celular: string): Promise<void> {
-  await repo().delete({ celular });
+  const resultado = await repo().delete({ celular });
+  if (resultado.affected) {
+    await history.limparHistorico(celular);
+  }
 }
 
 // Cria (ou reaproveita, se já existir uma sobra de tentativa anterior) a linha de onboarding do
@@ -170,6 +176,7 @@ export async function processarResposta(celular: string, texto: string): Promise
 
   if (PALAVRAS_CANCELAMENTO.includes(texto.trim().toLowerCase())) {
     await repo().delete({ celular });
+    await history.limparHistorico(celular);
     return 'Cadastro cancelado. Se mudar de ideia, é só me mandar outra mensagem que a gente começa de novo. 🌱';
   }
 
@@ -199,6 +206,9 @@ export async function processarResposta(celular: string, texto: string): Promise
       nome: cliente.nomeCompleto,
       token,
     });
+    // Limpa as perguntas do cadastro (nome, CPF/CNPJ, senha...) do histórico — senão elas
+    // continuam entrando no contexto que a IA usa pra interpretar as próximas mensagens.
+    await history.limparHistorico(celular);
 
     return `Conta criada com sucesso, ${cliente.nomeCompleto.split(' ')[0]}! 🌱 Agora é só me contar o que você quer registrar — ex: "gastei 500 com combustível hoje".`;
   } catch (err: any) {
