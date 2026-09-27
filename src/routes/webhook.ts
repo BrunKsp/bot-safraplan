@@ -200,6 +200,7 @@ async function handleUazapi(req: Request, res: Response): Promise<void> {
   // Log temporário pra confirmar o formato real do payload — os primeiros eventos "message" que
   // chegaram estavam sendo descartados em silêncio (sem log nenhum) por não bater com o formato
   // presumido a partir da documentação. Remover depois de confirmar o formato certo.
+  console.log(`[uazapi:webhook] content-type=${req.get('content-type')} rawBody=${req.rawBody?.toString('utf8')}`);
   console.log(`[uazapi:webhook] event=${event} data=${JSON.stringify(data)}`);
 
   if (event !== 'message' || !data) return; // status de entrega/leitura, presença etc.
