@@ -1,7 +1,7 @@
 # bot-safraplan
 
 Bot de WhatsApp com IA para o SafraPlan. Fluxo:
-
+  
 ```
 WhatsApp → WAHA → Webhook (este serviço) → IA (OpenAI/Claude) → backend-safraplan → Resposta → WhatsApp
 ```
