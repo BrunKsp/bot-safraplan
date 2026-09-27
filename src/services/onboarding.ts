@@ -129,9 +129,19 @@ export async function buscarEtapaAtual(celular: string): Promise<EtapaOnboarding
   return registro?.etapa ?? null;
 }
 
+// Cria (ou reaproveita, se já existir uma sobra de tentativa anterior) a linha de onboarding do
+// celular, sempre reiniciando do zero — usado tanto pra começar quanto pra reiniciar após erro.
+async function criarOuReiniciar(celular: string): Promise<void> {
+  const existente = await repo().findOne({ where: { celular } });
+  const registro = existente ?? repo().create({ celular });
+  registro.etapa = 'nome';
+  registro.dados = {};
+  await repo().save(registro);
+}
+
 // Primeira mensagem de um número sem conta nenhuma — inicia o cadastro.
 export async function iniciar(celular: string): Promise<string> {
-  await repo().save(repo().create({ celular, etapa: 'nome', dados: {} }));
+  await criarOuReiniciar(celular);
 
   return [
     'Não encontrei nenhuma conta SafraPlan vinculada a este número. Vamos criar uma agora mesmo, rapidinho — a qualquer momento você pode digitar "cancelar" pra parar.',
@@ -141,7 +151,7 @@ export async function iniciar(celular: string): Promise<string> {
 }
 
 async function reiniciarAposErro(celular: string, motivo: string): Promise<string> {
-  await repo().save(repo().create({ celular, etapa: 'nome', dados: {} }));
+  await criarOuReiniciar(celular);
   return `Não consegui criar sua conta: ${motivo}. Vamos tentar de novo — ${pergunta('nome', {})}`;
 }
 
