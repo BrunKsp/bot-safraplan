@@ -129,6 +129,13 @@ export async function buscarEtapaAtual(celular: string): Promise<EtapaOnboarding
   return registro?.etapa ?? null;
 }
 
+// Descarta um onboarding em andamento (ou sobra de tentativa antiga) — chamado sempre que uma
+// conta de verdade é resolvida pra esse celular, pra não ficar preso num cadastro que não serve
+// mais pra nada.
+export async function cancelarSeExistir(celular: string): Promise<void> {
+  await repo().delete({ celular });
+}
+
 // Cria (ou reaproveita, se já existir uma sobra de tentativa anterior) a linha de onboarding do
 // celular, sempre reiniciando do zero — usado tanto pra começar quanto pra reiniciar após erro.
 async function criarOuReiniciar(celular: string): Promise<void> {

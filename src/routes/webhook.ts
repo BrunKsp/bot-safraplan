@@ -227,6 +227,24 @@ function stripSufixoWhatsapp(valor?: string): string | null {
   return valor.split('@')[0];
 }
 
+// A UAZAPI às vezes manda o mesmo evento de mensagem duplicado (webhook entregue 2x em sequência)
+// — sem isso, a mesma mensagem do produtor seria processada (e respondida) duas vezes. Guarda só
+// os IDs mais recentes, em memória (reinicia sozinho a cada deploy, o que é aceitável aqui).
+const MAX_MENSAGENS_RECENTES = 500;
+const mensagensRecentes = new Set<string>();
+
+function jaProcessada(messageId: string | undefined): boolean {
+  if (!messageId) return false;
+  if (mensagensRecentes.has(messageId)) return true;
+
+  mensagensRecentes.add(messageId);
+  if (mensagensRecentes.size > MAX_MENSAGENS_RECENTES) {
+    const maisAntigo = mensagensRecentes.values().next().value;
+    if (maisAntigo !== undefined) mensagensRecentes.delete(maisAntigo);
+  }
+  return false;
+}
+
 async function handleUazapi(req: Request, res: Response): Promise<void> {
   if (req.query.token !== process.env.WEBHOOK_SECRET) {
     res.sendStatus(403);
@@ -241,6 +259,7 @@ async function handleUazapi(req: Request, res: Response): Promise<void> {
 
   const mensagem = dados?.message;
   if (!mensagem) return;
+  if (jaProcessada(mensagem.messageid)) return;
   if (mensagem.fromMe || mensagem.wasSentByApi || mensagem.isGroup || dados.chat?.wa_isGroup) return;
 
   const celular = stripSufixoWhatsapp(dados.chat?.wa_chatid) ?? dados.chat?.phone ?? stripSufixoWhatsapp(mensagem.sender_pn);

@@ -71,25 +71,32 @@ async function processarCampos(sessao: SessaoWhatsapp, celular: string, campos: 
 }
 
 export async function handleMessage({ celular, texto }: { celular: string; texto: string }): Promise<string> {
-  // Cadastro em andamento (respondendo a uma pergunta do onboarding) tem prioridade sobre
-  // qualquer outra coisa — inclusive sobre uma sessão que porventura já exista.
-  const etapaOnboarding = await onboarding.buscarEtapaAtual(celular);
-  if (etapaOnboarding) {
-    // Nunca grava a senha em texto puro no histórico de mensagens.
-    const conteudoHistorico = etapaOnboarding === 'senha' ? '[senha oculta]' : texto;
-    await history.salvarMensagem(celular, 'user', conteudoHistorico);
-    const resposta = await onboarding.processarResposta(celular, texto);
-    await history.salvarMensagem(celular, 'assistant', resposta);
-    return resposta;
-  }
-
+  // Sempre tenta resolver uma conta de verdade primeiro — mesmo que já exista um onboarding em
+  // andamento (ex: sobra de uma tentativa antiga, ou o cadastro/verificação terminou de acontecer
+  // por outro canal enquanto a pessoa ainda respondia as perguntas). Só cai no onboarding quando
+  // realmente não existe conta nenhuma pra esse número.
   const sessao = await resolverSessao(celular);
+
   if (!sessao) {
+    const etapaOnboarding = await onboarding.buscarEtapaAtual(celular);
+    if (etapaOnboarding) {
+      // Nunca grava a senha em texto puro no histórico de mensagens.
+      const conteudoHistorico = etapaOnboarding === 'senha' ? '[senha oculta]' : texto;
+      await history.salvarMensagem(celular, 'user', conteudoHistorico);
+      const resposta = await onboarding.processarResposta(celular, texto);
+      await history.salvarMensagem(celular, 'assistant', resposta);
+      return resposta;
+    }
+
     await history.salvarMensagem(celular, 'user', texto);
     const resposta = await onboarding.iniciar(celular);
     await history.salvarMensagem(celular, 'assistant', resposta);
     return resposta;
   }
+
+  // Achou conta (login por celular ou sessão local) — se sobrou um onboarding travado de antes,
+  // não serve mais pra nada, descarta.
+  await onboarding.cancelarSeExistir(celular);
 
   await history.salvarMensagem(celular, 'user', texto);
 
@@ -118,18 +125,21 @@ export async function handleImageMessage({
   buffer: Buffer;
   mimeType: string;
 }): Promise<string> {
-  const etapaOnboarding = await onboarding.buscarEtapaAtual(celular);
-  if (etapaOnboarding) {
-    return 'Ainda estou te ajudando a criar sua conta — responde por texto, por favor. 🙂';
-  }
-
   const sessao = await resolverSessao(celular);
+
   if (!sessao) {
+    const etapaOnboarding = await onboarding.buscarEtapaAtual(celular);
+    if (etapaOnboarding) {
+      return 'Ainda estou te ajudando a criar sua conta — responde por texto, por favor. 🙂';
+    }
+
     await history.salvarMensagem(celular, 'user', '[foto enviada]');
     const resposta = await onboarding.iniciar(celular);
     await history.salvarMensagem(celular, 'assistant', resposta);
     return resposta;
   }
+
+  await onboarding.cancelarSeExistir(celular);
 
   await history.salvarMensagem(celular, 'user', '[foto enviada]');
 
