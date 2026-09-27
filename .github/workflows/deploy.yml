@@ -70,5 +70,5 @@ jobs:
           ssh "${{ secrets.DROPLET_USER }}@${{ secrets.DROPLET_HOST }}" \
             "cd /opt/safraplan/infra && \
              docker compose pull bot && \
-             docker compose up -d bot && \
+             docker compose up -d --force-recreate bot && \
              docker image prune -f"

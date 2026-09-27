@@ -197,6 +197,10 @@ async function handleUazapi(req: Request, res: Response): Promise<void> {
   res.sendStatus(200);
 
   const { event, data } = req.body || {};
+  // Log temporário pra confirmar o formato real do payload — os primeiros eventos "message" que
+  // chegaram estavam sendo descartados em silêncio (sem log nenhum) por não bater com o formato
+  // presumido a partir da documentação. Remover depois de confirmar o formato certo.
+  console.log(`[uazapi:webhook] event=${event} data=${JSON.stringify(data)}`);
 
   if (event !== 'message' || !data) return; // status de entrega/leitura, presença etc.
   if (data.fromMe) return; // ignora mensagens enviadas pelo próprio número do bot
