@@ -91,7 +91,15 @@ async function registrarContaPagar(sessao: SessaoWhatsapp, campos: CamposExtraid
     dataVencimento: campos.dataVencimento,
     fornecedor: campos.fornecedor,
     formaPagamento: campos.formaPagamento,
+    numeroParcelas: campos.numeroParcelas,
   });
+
+  if (conta.totalParcelas > 1) {
+    const ultima = conta.proximasParcelas?.[conta.proximasParcelas.length - 1];
+    return {
+      resposta: `Conta a pagar parcelada registrada: ${conta.totalParcelas}x de ${moeda(conta.valor)} (total ${moeda(conta.valor * conta.totalParcelas)}), 1ª parcela em ${conta.dataVencimento}${ultima ? `, última em ${ultima.dataVencimento}` : ''}. ✅`,
+    };
+  }
 
   return { resposta: `Conta a pagar registrada: ${moeda(conta.valor)}, vencimento em ${conta.dataVencimento}. ✅` };
 }
@@ -112,7 +120,15 @@ async function registrarContaReceber(sessao: SessaoWhatsapp, campos: CamposExtra
     valor: campos.valor,
     dataVencimento: campos.dataVencimento,
     comprador: campos.comprador,
+    numeroParcelas: campos.numeroParcelas,
   });
+
+  if (conta.totalParcelas > 1) {
+    const ultima = conta.proximasParcelas?.[conta.proximasParcelas.length - 1];
+    return {
+      resposta: `Conta a receber parcelada registrada: ${conta.totalParcelas}x de ${moeda(conta.valor)} (total ${moeda(conta.valor * conta.totalParcelas)}), 1ª parcela prevista em ${conta.dataVencimento}${ultima ? `, última em ${ultima.dataVencimento}` : ''}. ✅`,
+    };
+  }
 
   return { resposta: `Conta a receber registrada: ${moeda(conta.valor)}, previsto para ${conta.dataVencimento}. ✅` };
 }

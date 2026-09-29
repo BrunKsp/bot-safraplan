@@ -39,6 +39,9 @@ export interface CamposExtraidos {
   quantidade?: number;
   unidadeMedida?: UnidadeMedida;
   gerarContaReceber?: boolean;
+  // Só se aplica a REGISTRAR_CONTA_PAGAR/REGISTRAR_CONTA_RECEBER — quando presente e > 1, gera
+  // uma conta por parcela (vencimentos mensais a partir de "dataVencimento").
+  numeroParcelas?: number;
   resposta?: string;
   // Preenchido pelo orquestrador (não pela IA) quando a mensagem era uma foto e o upload para o
   // R2 deu certo — não faz parte do schema de tool-calling.
@@ -79,6 +82,7 @@ const PARAMETROS = {
     quantidade: { type: 'number', description: 'Quantidade vendida.' },
     unidadeMedida: { type: 'string', enum: UNIDADES, description: 'Unidade de medida da quantidade/produto.' },
     gerarContaReceber: { type: 'boolean', description: 'true se o produtor deu a entender que já recebeu o pagamento da venda.' },
+    numeroParcelas: { type: 'number', description: 'Número de parcelas, só para REGISTRAR_CONTA_PAGAR/REGISTRAR_CONTA_RECEBER (ex: "em 10x", "parcelado em 3 vezes"). Se o produtor disser o valor TOTAL da compra/venda, calcule e preencha "valor" com o valor de CADA parcela (total dividido por numeroParcelas), nunca o total.' },
     resposta: { type: 'string', description: 'Resposta curta e amigável em português para o caso de SAUDACAO, AJUDA ou NAO_ENTENDI. Ignorado nos outros intents.' },
   },
   required: ['intent'],
@@ -94,6 +98,8 @@ A data de hoje é ${hoje} (formato YYYY-MM-DD). Resolva expressões relativas de
 Exemplos de intenção:
 - "gastei 500 reais com combustível hoje" -> REGISTRAR_DESPESA (valor=500, categoria=combustível, data=hoje)
 - "tenho uma conta de 3000 pra pagar dia 15" -> REGISTRAR_CONTA_PAGAR (valor=3000, dataVencimento=YYYY-MM-15)
+- "comprei um trator de 50000 parcelado em 10x, primeira parcela dia 10" -> REGISTRAR_CONTA_PAGAR (valor=5000 [50000 ÷ 10, valor de CADA parcela], numeroParcelas=10, dataVencimento=YYYY-MM-10)
+- "vou receber 12000 em 4 vezes, começando dia 5" -> REGISTRAR_CONTA_RECEBER (valor=3000 [12000 ÷ 4], numeroParcelas=4, dataVencimento=YYYY-MM-05)
 - "vendi 200 sacas de soja a 148 reais" -> REGISTRAR_VENDA (produto=soja, quantidade=200, unidadeMedida=SACA, valor=148)
 - "quanto devo até o fim do mês" / "qual meu resumo" -> CONSULTAR_RESUMO
 - "o que tá vencendo" / "contas a pagar" -> CONSULTAR_CONTAS_PAGAR
