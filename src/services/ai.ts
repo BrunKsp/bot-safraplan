@@ -103,10 +103,13 @@ IMPORTANTE sobre o campo "categoria" (REGISTRAR_DESPESA): preencha SEMPRE com su
 
 IMPORTANTE sobre compra parcelada ("gastei"/"comprei" + "parcelado"/"em Nx"/"N vezes"): use SEMPRE REGISTRAR_DESPESA (nunca REGISTRAR_CONTA_PAGAR) — o produtor está descrevendo uma COMPRA que ele fez, não uma conta avulsa. Preencha "valor" com o valor TOTAL da compra (não divida pelas parcelas — quem divide é o sistema), "numeroParcelas" com a quantidade de parcelas, e "dataVencimento" com a data da 1ª parcela (se não informada, use a mesma data da compra). REGISTRAR_CONTA_PAGAR só se aplica quando NÃO há uma compra/despesa sendo descrita — é uma conta a pagar avulsa (ex: aluguel, boleto de terceiro) que o produtor está só anotando, sem ter "gastado" nada ainda; nesse caso sim "valor" é o valor de CADA parcela.
 
+ATENÇÃO: o produtor nem sempre menciona as parcelas em ordem — às vezes fala da 2ª parcela antes da 1ª na frase. Leia a mensagem inteira e identifique explicitamente qual parcela é a PRIMEIRA (a mais próxima/mais antiga cronologicamente) antes de preencher "dataVencimento" — nunca assuma que é a última data mencionada. Ex: "pago em 2x, a 2ª parcela ficou pra outubro, a 1ª foi dia 25 de setembro" -> a 1ª parcela é claramente rotulada ("a 1ª foi dia 25 de setembro") -> dataVencimento=YYYY-09-25, NÃO outubro.
+
 Exemplos de intenção:
 - "gastei 500 reais com combustível hoje" -> REGISTRAR_DESPESA (valor=500, categoria=combustível, descricao="Combustível", data=hoje)
 - "gastei 50000 com compra de sementes" -> REGISTRAR_DESPESA (valor=50000, categoria=Sementes, descricao="Compra de sementes")
 - "gastei 50000 com sementes, pago em 2x no boleto, 1ª parcela dia 25/09" -> REGISTRAR_DESPESA (valor=50000 [TOTAL, não divida], categoria=Sementes, descricao="Compra de sementes", numeroParcelas=2, dataVencimento=YYYY-09-25, formaPagamento=BOLETO)
+- "gastei 50000 com sementes, pago em 2x no boleto, a 2ª parcela ficou pra outubro, a 1ª foi dia 25 de setembro" -> REGISTRAR_DESPESA (valor=50000 [TOTAL], categoria=Sementes, descricao="Compra de sementes", numeroParcelas=2, dataVencimento=YYYY-09-25 [a 1ª parcela, mesmo mencionada por último no texto], formaPagamento=BOLETO)
 - "comprei um trator de 50000 parcelado em 10x, primeira parcela dia 10" -> REGISTRAR_DESPESA (valor=50000 [TOTAL], categoria=Maquinário, descricao="Compra de trator", numeroParcelas=10, dataVencimento=YYYY-MM-10)
 - "tenho uma conta de 3000 pra pagar dia 15" -> REGISTRAR_CONTA_PAGAR (valor=3000, descricao="Conta a pagar", dataVencimento=YYYY-MM-15)
 - "tenho um boleto de aluguel de 12000 em 4x, começando dia 5" -> REGISTRAR_CONTA_PAGAR (valor=3000 [12000 ÷ 4, valor de CADA parcela], descricao="Aluguel", numeroParcelas=4, dataVencimento=YYYY-MM-05)

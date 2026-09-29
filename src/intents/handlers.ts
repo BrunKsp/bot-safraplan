@@ -81,7 +81,16 @@ async function registrarDespesa(sessao: SessaoWhatsapp, campos: CamposExtraidos)
   if (perguntar) return { perguntar, pergunta };
 
   const categoria = await resolverCategoria(sessao.token, campos.categoria);
-  const dataPrimeiraParcela = campos.dataVencimento || campos.data || hojeISO();
+
+  // Aplica os valores padrão DIRETO no objeto `campos` (em vez de só na hora de montar o texto
+  // de confirmação) — esse mesmo objeto é o que fica salvo em contexto_pendente e reaproveitado
+  // quando o produtor responde "sim". Sem isso, o resumo mostrado podia divergir do que de fato
+  // é gravado no backend, se por qualquer motivo o valor "cru" (sem fallback) se perder no meio
+  // do caminho entre as duas mensagens.
+  campos.data = campos.data || hojeISO();
+  campos.formaPagamento = campos.formaPagamento || 'OUTRO';
+  campos.descricao = campos.descricao || categoria.nome;
+  const dataPrimeiraParcela = campos.dataVencimento || campos.data;
   const valorParcela = parcelado ? Math.round((campos.valor / campos.numeroParcelas!) * 100) / 100 : campos.valor;
 
   if (!campos.confirmado) {
@@ -89,9 +98,9 @@ async function registrarDespesa(sessao: SessaoWhatsapp, campos: CamposExtraidos)
       ['Valor total (despesa)', moeda(campos.valor)],
       ['Categoria', categoria.nome],
       ['Fazenda', fazenda!.nome],
-      ['Data', campos.data || hojeISO()],
-      ['Descrição', campos.descricao || categoria.nome],
-      ['Forma de pagamento', campos.formaPagamento || 'OUTRO'],
+      ['Data', campos.data],
+      ['Descrição', campos.descricao],
+      ['Forma de pagamento', campos.formaPagamento],
     ];
     if (parcelado) {
       linhas.push(['Parcelamento (conta a pagar)', `${campos.numeroParcelas}x de ${moeda(valorParcela)}, 1ª em ${dataPrimeiraParcela}`]);
@@ -104,10 +113,10 @@ async function registrarDespesa(sessao: SessaoWhatsapp, campos: CamposExtraidos)
   const despesa = await backendClient.criarDespesa(sessao.token, {
     fazendaSlug: fazenda!.slug,
     categoriaSlug: categoria.slug,
-    descricao: campos.descricao || categoria.nome,
+    descricao: campos.descricao,
     valor: campos.valor,
-    data: campos.data || hojeISO(),
-    formaPagamento: campos.formaPagamento || 'OUTRO',
+    data: campos.data,
+    formaPagamento: campos.formaPagamento,
     anexoUrl: campos.anexoUrl,
   });
 
@@ -117,7 +126,7 @@ async function registrarDespesa(sessao: SessaoWhatsapp, campos: CamposExtraidos)
   const conta = await backendClient.criarContaPagar(sessao.token, {
     fazendaSlug: fazenda!.slug,
     categoriaSlug: categoria.slug,
-    descricao: `${campos.descricao || categoria.nome} (parcelamento)`,
+    descricao: `${campos.descricao} (parcelamento)`,
     valor: valorParcela,
     dataVencimento: dataPrimeiraParcela,
     formaPagamento: campos.formaPagamento,
@@ -138,12 +147,14 @@ async function registrarContaPagar(sessao: SessaoWhatsapp, campos: CamposExtraid
   if (resposta) return { resposta };
   if (perguntar) return { perguntar, pergunta };
 
+  campos.descricao = campos.descricao || 'Conta a pagar';
+
   if (!campos.confirmado) {
     return pedirConfirmacao([
       ['Valor', campos.numeroParcelas && campos.numeroParcelas > 1 ? `${moeda(campos.valor)} x${campos.numeroParcelas}` : moeda(campos.valor)],
       ['Fazenda', fazenda!.nome],
       ['Vencimento (1ª parcela)', campos.dataVencimento],
-      ['Descrição', campos.descricao || 'Conta a pagar'],
+      ['Descrição', campos.descricao],
       ['Fornecedor', campos.fornecedor],
       ['Forma de pagamento', campos.formaPagamento],
     ]);
@@ -153,7 +164,7 @@ async function registrarContaPagar(sessao: SessaoWhatsapp, campos: CamposExtraid
 
   const conta = await backendClient.criarContaPagar(sessao.token, {
     fazendaSlug: fazenda!.slug,
-    descricao: campos.descricao || 'Conta a pagar',
+    descricao: campos.descricao,
     valor: campos.valor,
     dataVencimento: campos.dataVencimento,
     fornecedor: campos.fornecedor,
@@ -179,12 +190,14 @@ async function registrarContaReceber(sessao: SessaoWhatsapp, campos: CamposExtra
   if (resposta) return { resposta };
   if (perguntar) return { perguntar, pergunta };
 
+  campos.descricao = campos.descricao || 'Conta a receber';
+
   if (!campos.confirmado) {
     return pedirConfirmacao([
       ['Valor', campos.numeroParcelas && campos.numeroParcelas > 1 ? `${moeda(campos.valor)} x${campos.numeroParcelas}` : moeda(campos.valor)],
       ['Fazenda', fazenda!.nome],
       ['Previsto (1ª parcela)', campos.dataVencimento],
-      ['Descrição', campos.descricao || 'Conta a receber'],
+      ['Descrição', campos.descricao],
       ['Comprador', campos.comprador],
     ]);
   }
@@ -193,7 +206,7 @@ async function registrarContaReceber(sessao: SessaoWhatsapp, campos: CamposExtra
 
   const conta = await backendClient.criarContaReceber(sessao.token, {
     fazendaSlug: fazenda!.slug,
-    descricao: campos.descricao || 'Conta a receber',
+    descricao: campos.descricao,
     valor: campos.valor,
     dataVencimento: campos.dataVencimento,
     comprador: campos.comprador,
@@ -222,13 +235,16 @@ async function registrarVenda(sessao: SessaoWhatsapp, campos: CamposExtraidos): 
   const produtoResolvido = await resolverProduto(sessao.token, campos.produto);
   if (produtoResolvido.erro) return { resposta: produtoResolvido.erro };
 
+  campos.data = campos.data || hojeISO();
+  campos.unidadeMedida = campos.unidadeMedida || (produtoResolvido.produto!.unidadeMedida as CamposExtraidos['unidadeMedida']);
+
   if (!campos.confirmado) {
     return pedirConfirmacao([
       ['Produto', produtoResolvido.produto!.nome],
-      ['Quantidade', `${campos.quantidade} ${campos.unidadeMedida || produtoResolvido.produto!.unidadeMedida}`],
+      ['Quantidade', `${campos.quantidade} ${campos.unidadeMedida}`],
       ['Preço unitário', moeda(campos.valor)],
       ['Fazenda', fazenda!.nome],
-      ['Data', campos.data || hojeISO()],
+      ['Data', campos.data],
       ['Comprador', campos.comprador],
       ['Já recebeu o pagamento?', campos.gerarContaReceber ? 'Sim' : 'Não'],
     ]);
@@ -240,9 +256,9 @@ async function registrarVenda(sessao: SessaoWhatsapp, campos: CamposExtraidos): 
     fazendaSlug: fazenda!.slug,
     produtoSlug: produtoResolvido.produto!.slug,
     quantidade: campos.quantidade,
-    unidadeMedida: campos.unidadeMedida || produtoResolvido.produto!.unidadeMedida,
+    unidadeMedida: campos.unidadeMedida,
     precoUnitario: campos.valor,
-    data: campos.data || hojeISO(),
+    data: campos.data,
     comprador: campos.comprador,
     gerarContaReceber: Boolean(campos.gerarContaReceber),
   });
