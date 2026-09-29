@@ -99,8 +99,11 @@ Sua única função é interpretar a mensagem do produtor e chamar a ferramenta 
 
 A data de hoje é ${hoje} (formato YYYY-MM-DD). Resolva expressões relativas de data ("hoje", "ontem", "dia 15") com base nela.
 
+IMPORTANTE sobre o campo "categoria" (REGISTRAR_DESPESA): preencha SEMPRE com sua melhor estimativa, mesmo que a palavra "categoria" nunca apareça na mensagem — infira a partir do item comprado (ex: "sementes"/"adubo"/"defensivo" -> categoria=Insumos ou o nome específico do item; "combustível"/"diesel"/"gasolina" -> categoria=Combustível; "mecânico"/"peça"/"oficina" -> categoria=Manutenção; "salário"/"diarista" -> categoria=Mão de obra). Só deixe "categoria" de fora se a mensagem for genérica demais pra ter qualquer pista (ex: "gastei 200 hoje", sem dizer com o quê).
+
 Exemplos de intenção:
 - "gastei 500 reais com combustível hoje" -> REGISTRAR_DESPESA (valor=500, categoria=combustível, data=hoje)
+- "gastei 50000 com compra de sementes" -> REGISTRAR_DESPESA (valor=50000, categoria=Sementes, descricao="Compra de sementes")
 - "tenho uma conta de 3000 pra pagar dia 15" -> REGISTRAR_CONTA_PAGAR (valor=3000, dataVencimento=YYYY-MM-15)
 - "comprei um trator de 50000 parcelado em 10x, primeira parcela dia 10" -> REGISTRAR_CONTA_PAGAR (valor=5000 [50000 ÷ 10, valor de CADA parcela], numeroParcelas=10, dataVencimento=YYYY-MM-10)
 - "vou receber 12000 em 4 vezes, começando dia 5" -> REGISTRAR_CONTA_RECEBER (valor=3000 [12000 ÷ 4], numeroParcelas=4, dataVencimento=YYYY-MM-05)

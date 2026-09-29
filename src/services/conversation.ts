@@ -5,7 +5,7 @@ import * as session from './session';
 import * as history from './history';
 import * as storage from './storage';
 import * as onboarding from './onboarding';
-import { extrairIntencao, classificarImagem, CamposExtraidos } from './ai';
+import { extrairIntencao, classificarImagem, CamposExtraidos, FormaPagamento } from './ai';
 import { tratarIntencao } from '../intents/handlers';
 import { SessaoWhatsapp } from '../database/entities/SessaoWhatsapp';
 
@@ -41,22 +41,62 @@ const CAMPOS_CORRIGIVEIS: Record<string, keyof CamposExtraidos> = {
 
 const CAMPOS_NUMERICOS: Array<keyof CamposExtraidos> = ['valor', 'quantidade', 'numeroParcelas'];
 
-// Reconhece "campo: valor" ou "campo - valor" na resposta à confirmação (ex: "categoria: combustível").
-function interpretarCorrecao(texto: string): { campo: keyof CamposExtraidos; valor: string | number } | null {
-  const match = texto.trim().match(/^([a-zà-ú çã ]+?)\s*[:\-]\s*(.+)$/i);
-  if (!match) return null;
+const FORMAS_PAGAMENTO_PALAVRAS: Record<string, FormaPagamento> = {
+  dinheiro: 'DINHEIRO',
+  pix: 'PIX',
+  cartao: 'CARTAO',
+  cartão: 'CARTAO',
+  boleto: 'BOLETO',
+  financiamento: 'FINANCIAMENTO',
+};
 
-  const campo = CAMPOS_CORRIGIVEIS[match[1].trim().toLowerCase()];
-  if (!campo) return null;
+// A forma de pagamento tem que ser um dos valores fixos que o backend aceita — em vez de gravar
+// o texto livre do produtor ("parcelado em 2x no boleto") direto, que quebraria a validação lá,
+// procura uma palavra-chave conhecida dentro do texto.
+function normalizarFormaPagamento(texto: string): FormaPagamento | undefined {
+  const normalizado = texto.toLowerCase();
+  for (const [palavra, forma] of Object.entries(FORMAS_PAGAMENTO_PALAVRAS)) {
+    if (normalizado.includes(palavra)) return forma;
+  }
+  return undefined;
+}
 
-  const valorTexto = match[2].trim();
-  if (CAMPOS_NUMERICOS.includes(campo)) {
-    const numero = Number(valorTexto.replace(/\./g, '').replace(',', '.').replace(/[^\d.]/g, ''));
-    if (Number.isNaN(numero)) return null;
-    return { campo, valor: numero };
+interface Correcao {
+  campo: keyof CamposExtraidos;
+  valor: string | number;
+}
+
+// Reconhece uma ou mais correções "campo: valor" (uma por linha) na resposta à confirmação —
+// ex: "categoria: combustível" ou várias linhas de uma vez ("categoria: Insumos\nfazenda: Sede").
+function interpretarCorrecoes(texto: string): Correcao[] {
+  const linhas = texto.split('\n').map((linha) => linha.trim()).filter(Boolean);
+  const correcoes: Correcao[] = [];
+
+  for (const linha of linhas) {
+    const match = linha.match(/^([a-zà-ú çã ]+?)\s*[:\-]\s*(.+)$/i);
+    if (!match) continue;
+
+    const campo = CAMPOS_CORRIGIVEIS[match[1].trim().toLowerCase()];
+    if (!campo) continue;
+
+    const valorTexto = match[2].trim();
+
+    if (campo === 'formaPagamento') {
+      const forma = normalizarFormaPagamento(valorTexto);
+      if (forma) correcoes.push({ campo, valor: forma }); // se não reconhecer, ignora em vez de gravar lixo
+      continue;
+    }
+
+    if (CAMPOS_NUMERICOS.includes(campo)) {
+      const numero = Number(valorTexto.replace(/\./g, '').replace(',', '.').replace(/[^\d.]/g, ''));
+      if (!Number.isNaN(numero)) correcoes.push({ campo, valor: numero });
+      continue;
+    }
+
+    correcoes.push({ campo, valor: valorTexto });
   }
 
-  return { campo, valor: valorTexto };
+  return correcoes;
 }
 
 // A chamada ao provedor de IA (OpenAI/Anthropic/NVIDIA) é a parte mais sujeita a falhar sem
@@ -163,15 +203,30 @@ export async function handleMessage({ celular, texto }: { celular: string; texto
         await history.salvarMensagem(celular, 'assistant', resposta);
         return resposta;
       } else {
-        const correcao = interpretarCorrecao(texto);
-        if (!correcao) {
-          const dica = 'Não entendi a correção. Responda *sim* pra confirmar assim mesmo, ou me diga o campo e o valor certo (ex: "categoria: combustível").';
+        const correcoes = interpretarCorrecoes(texto);
+
+        if (correcoes.length === 0 && /parcel/i.test(texto) && (camposAnteriores as unknown as CamposExtraidos).intent === 'REGISTRAR_DESPESA') {
+          // Despesa é um gasto pontual — não existe "despesa parcelada" no backend, só conta a
+          // pagar. Melhor avisar do que aceitar e perder a informação do parcelamento.
+          const aviso = 'Despesa é um lançamento único, sem parcelas. Se essa compra for parcelada, registra como "conta a pagar" em vez de despesa — me diga o valor de CADA parcela, quantas parcelas e a data da 1ª, ex: "tenho uma conta de sementes de 25000 em 2x, primeira parcela dia 25".';
+          await session.limparContextoPendente(celular);
+          await history.salvarMensagem(celular, 'assistant', aviso);
+          return aviso;
+        }
+
+        if (correcoes.length === 0) {
+          const dica = 'Não entendi a correção. Responda *sim* pra confirmar assim mesmo, ou me diga o campo e o valor certo (ex: "categoria: combustível"). Pode mandar mais de um por linha.';
           await history.salvarMensagem(celular, 'assistant', dica);
           return dica;
         }
-        // Mantém em modo "não confirmado" — o handler vai reprocessar com o campo corrigido e
+
+        // Mantém em modo "não confirmado" — o handler vai reprocessar com os campos corrigidos e
         // mostrar o resumo atualizado de novo, em vez de já gravar no backend.
-        campos = { ...camposAnteriores, [correcao.campo]: correcao.valor, confirmado: false } as unknown as CamposExtraidos;
+        campos = { ...camposAnteriores } as unknown as CamposExtraidos;
+        for (const correcao of correcoes) {
+          (campos as unknown as Record<string, unknown>)[correcao.campo] = correcao.valor;
+        }
+        campos.confirmado = false;
       }
     } else {
       // A mensagem atual é a resposta à pergunta que o bot fez (ex: "qual fazenda?").
