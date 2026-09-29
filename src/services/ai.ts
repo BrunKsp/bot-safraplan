@@ -13,6 +13,7 @@ export type Intent =
   | 'REGISTRAR_CONTA_PAGAR'
   | 'REGISTRAR_CONTA_RECEBER'
   | 'REGISTRAR_VENDA'
+  | 'MARCAR_CONTA_PAGA'
   | 'CONSULTAR_RESUMO'
   | 'CONSULTAR_CONTAS_PAGAR'
   | 'CONSULTAR_PRECOS_MERCADO'
@@ -57,6 +58,7 @@ const INTENTS: Intent[] = [
   'REGISTRAR_CONTA_PAGAR',
   'REGISTRAR_CONTA_RECEBER',
   'REGISTRAR_VENDA',
+  'MARCAR_CONTA_PAGA',
   'CONSULTAR_RESUMO',
   'CONSULTAR_CONTAS_PAGAR',
   'CONSULTAR_PRECOS_MERCADO',
@@ -73,11 +75,11 @@ const PARAMETROS = {
   properties: {
     intent: { type: 'string', enum: INTENTS, description: 'A intenção principal da mensagem do produtor.' },
     valor: { type: 'number', description: 'Valor em reais mencionado (despesa, conta, preço unitário de venda).' },
-    descricao: { type: 'string', description: 'Descrição curta do que foi gasto/vendido/a pagar/a receber.' },
+    descricao: { type: 'string', description: 'Descrição curta do que foi gasto/vendido/a pagar/a receber. Para MARCAR_CONTA_PAGA, é o texto usado pra achar a conta a pagar existente — inclua o que a identifica (ex: "primeira parcela das sementes", "conta do fornecedor X").' },
     categoria: { type: 'string', description: 'Categoria mencionada em texto livre (ex: combustível, fertilizante, mão de obra).' },
     fazenda: { type: 'string', description: 'Nome da fazenda mencionada, se houver.' },
     safra: { type: 'string', description: 'Safra/cultura e ano mencionados, se houver (ex: "soja 2025").' },
-    data: { type: 'string', description: 'Data do evento no formato YYYY-MM-DD, resolvida a partir de expressões como "hoje", "ontem". Se não mencionada, use a data de hoje informada no prompt.' },
+    data: { type: 'string', description: 'Data do evento no formato YYYY-MM-DD, resolvida a partir de expressões como "hoje", "ontem". Se não mencionada, use a data de hoje informada no prompt. Para MARCAR_CONTA_PAGA, é a data em que o pagamento foi feito.' },
     dataVencimento: { type: 'string', description: 'Data de vencimento no formato YYYY-MM-DD, para contas a pagar/receber.' },
     formaPagamento: { type: 'string', enum: FORMAS_PAGAMENTO, description: 'Forma de pagamento mencionada.' },
     fornecedor: { type: 'string', description: 'Fornecedor mencionado (contas a pagar).' },
@@ -115,6 +117,7 @@ Exemplos de intenção:
 - "tenho um boleto de aluguel de 12000 em 4x, começando dia 5" -> REGISTRAR_CONTA_PAGAR (valor=3000 [12000 ÷ 4, valor de CADA parcela], descricao="Aluguel", numeroParcelas=4, dataVencimento=YYYY-MM-05)
 - "vou receber 12000 em 4 vezes, começando dia 5" -> REGISTRAR_CONTA_RECEBER (valor=3000 [12000 ÷ 4], numeroParcelas=4, dataVencimento=YYYY-MM-05)
 - "vendi 200 sacas de soja a 148 reais" -> REGISTRAR_VENDA (produto=soja, quantidade=200, unidadeMedida=SACA, valor=148)
+- "marque como pago a primeira parcela das sementes" / "já paguei a conta do fornecedor X" -> MARCAR_CONTA_PAGA (descricao="primeira parcela sementes" ou o texto que identifica a conta já existente, data=hoje se não disser quando pagou). NUNCA use REGISTRAR_DESPESA/REGISTRAR_CONTA_PAGAR pra isso — é sobre uma conta que JÁ existe, não um lançamento novo.
 - "quanto devo até o fim do mês" / "qual meu resumo" -> CONSULTAR_RESUMO
 - "o que tá vencendo" / "contas a pagar" -> CONSULTAR_CONTAS_PAGAR
 - "quanto tá a saca da soja" / "preço do milho hoje" -> CONSULTAR_PRECOS_MERCADO

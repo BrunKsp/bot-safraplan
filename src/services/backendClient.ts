@@ -124,6 +124,11 @@ export async function listarContasPagar(token: string, params: Record<string, un
   return data;
 }
 
+export async function pagarContaPagar(token: string, slug: string, payload: Record<string, unknown>): Promise<any> {
+  const { data } = await api.patch(`/contas-pagar/${slug}/pagar`, payload, comToken(token));
+  return data;
+}
+
 export async function getResumoDashboard(token: string, params: Record<string, unknown>): Promise<any> {
   const { data } = await api.get('/dashboard/resumo', { ...comToken(token), params });
   return data;

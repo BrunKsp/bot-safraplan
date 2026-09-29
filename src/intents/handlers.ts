@@ -7,7 +7,7 @@
 
 import * as backendClient from '../services/backendClient';
 import * as session from '../services/session';
-import { resolverFazenda, resolverCategoria, resolverProduto } from './resolvers';
+import { resolverFazenda, resolverCategoria, resolverProduto, normalizar } from './resolvers';
 import { CamposExtraidos } from '../services/ai';
 import { SessaoWhatsapp } from '../database/entities/SessaoWhatsapp';
 
@@ -268,6 +268,77 @@ async function registrarVenda(sessao: SessaoWhatsapp, campos: CamposExtraidos): 
   };
 }
 
+const ORDINAIS: Record<string, number> = {
+  primeira: 1, '1a': 1, '1ª': 1,
+  segunda: 2, '2a': 2, '2ª': 2,
+  terceira: 3, '3a': 3, '3ª': 3,
+  quarta: 4, '4a': 4, '4ª': 4,
+  quinta: 5, '5a': 5, '5ª': 5,
+};
+
+// Extrai "1ª/primeira parcela" etc do texto de busca — usado pra distinguir entre parcelas de um
+// mesmo parcelamento (todas têm descrição parecida, só o número da parcela muda).
+function extrairOrdinalParcela(texto: string): number | null {
+  const normalizado = normalizar(texto);
+  for (const [palavra, numero] of Object.entries(ORDINAIS)) {
+    if (normalizado.includes(palavra)) return numero;
+  }
+  const match = normalizado.match(/(\d+)\s*(?:a|ª)?\s*parcela/);
+  return match ? Number(match[1]) : null;
+}
+
+// Marca uma conta a pagar já existente como paga — busca por texto livre (e, se mencionado, pelo
+// número da parcela) entre as contas pendentes do cliente, em vez de pedir o slug exato.
+async function marcarContaPaga(sessao: SessaoWhatsapp, campos: CamposExtraidos): Promise<ResultadoIntencao> {
+  if (!campos.descricao) return { resposta: 'Qual conta você quer marcar como paga? Me diga como reconhecer ela (ex: "primeira parcela das sementes", "conta do fornecedor X").' };
+
+  const contas = await backendClient.listarContasPagar(sessao.token, { status: 'PENDENTE' });
+  const lista: any[] = Array.isArray(contas) ? contas : contas.dados || [];
+
+  const ordinal = extrairOrdinalParcela(campos.descricao);
+  const termoLimpo = normalizar(campos.descricao)
+    .replace(/\b(primeira|segunda|terceira|quarta|quinta|\d+\s*[aª]?)\b/g, '')
+    .replace(/parcela/g, '')
+    .trim();
+
+  let candidatas = lista;
+  if (ordinal) candidatas = candidatas.filter((c) => c.numeroParcela === ordinal);
+  if (termoLimpo) {
+    const porTexto = candidatas.filter((c) => normalizar(c.descricao).includes(termoLimpo));
+    if (porTexto.length > 0) candidatas = porTexto;
+  }
+
+  if (candidatas.length === 0) {
+    return { resposta: `Não encontrei nenhuma conta a pagar pendente parecida com "${campos.descricao}". Digite *contas a pagar* pra ver a lista.` };
+  }
+
+  if (candidatas.length > 1) {
+    const linhas = candidatas.slice(0, 10).map((c) => `• ${c.descricao} — ${moeda(c.valor)} (vence ${c.dataVencimento})`);
+    return { resposta: `Achei mais de uma conta parecida — me diga mais detalhes pra eu saber qual:\n${linhas.join('\n')}` };
+  }
+
+  const conta = candidatas[0];
+  campos.data = campos.data || hojeISO();
+  campos.formaPagamento = campos.formaPagamento || 'OUTRO';
+
+  if (!campos.confirmado) {
+    return pedirConfirmacao([
+      ['Conta', conta.descricao],
+      ['Valor', moeda(conta.valor)],
+      ['Vencimento', conta.dataVencimento],
+      ['Data do pagamento', campos.data],
+      ['Forma de pagamento', campos.formaPagamento],
+    ]);
+  }
+
+  const atualizada = await backendClient.pagarContaPagar(sessao.token, conta.slug, {
+    dataPagamento: campos.data,
+    formaPagamento: campos.formaPagamento,
+  });
+
+  return { resposta: `Conta marcada como paga: ${atualizada.descricao} — ${moeda(atualizada.valor)}. ✅` };
+}
+
 async function consultarResumo(sessao: SessaoWhatsapp): Promise<ResultadoIntencao> {
   const resumo = await backendClient.getResumoDashboard(sessao.token, {});
 
@@ -316,6 +387,7 @@ const HANDLERS: Record<string, (sessao: SessaoWhatsapp, campos: CamposExtraidos)
   REGISTRAR_CONTA_PAGAR: registrarContaPagar,
   REGISTRAR_CONTA_RECEBER: registrarContaReceber,
   REGISTRAR_VENDA: registrarVenda,
+  MARCAR_CONTA_PAGA: marcarContaPaga,
   CONSULTAR_RESUMO: consultarResumo,
   CONSULTAR_CONTAS_PAGAR: consultarContasPagar,
   CONSULTAR_PRECOS_MERCADO: consultarPrecosMercado,
