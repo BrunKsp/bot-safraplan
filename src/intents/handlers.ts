@@ -68,21 +68,35 @@ function pedirConfirmacao(linhas: Array<[string, string | undefined]>): Resultad
 async function registrarDespesa(sessao: SessaoWhatsapp, campos: CamposExtraidos): Promise<ResultadoIntencao> {
   if (!campos.valor) return { resposta: 'Quanto foi o valor da despesa?' };
 
+  // Compra parcelada = os dois lançamentos: a despesa em si com o valor bruto (categorização,
+  // histórico) MAIS as parcelas como conta a pagar (controle de fluxo de caixa). A despesa
+  // sozinha não tem conceito de parcela — quem carrega isso é a conta a pagar gerada junto.
+  const parcelado = Boolean(campos.numeroParcelas && campos.numeroParcelas > 1);
+  if (parcelado && !campos.dataVencimento && !campos.data) {
+    return { resposta: 'Pra quando é a 1ª parcela?' };
+  }
+
   const { fazenda, perguntar, pergunta, resposta } = await resolverFazendaOuPerguntar(sessao, campos);
   if (resposta) return { resposta };
   if (perguntar) return { perguntar, pergunta };
 
   const categoria = await resolverCategoria(sessao.token, campos.categoria);
+  const dataPrimeiraParcela = campos.dataVencimento || campos.data || hojeISO();
+  const valorParcela = parcelado ? Math.round((campos.valor / campos.numeroParcelas!) * 100) / 100 : campos.valor;
 
   if (!campos.confirmado) {
-    return pedirConfirmacao([
-      ['Valor', moeda(campos.valor)],
+    const linhas: Array<[string, string | undefined]> = [
+      ['Valor total (despesa)', moeda(campos.valor)],
       ['Categoria', categoria.nome],
       ['Fazenda', fazenda!.nome],
       ['Data', campos.data || hojeISO()],
       ['Descrição', campos.descricao || categoria.nome],
       ['Forma de pagamento', campos.formaPagamento || 'OUTRO'],
-    ]);
+    ];
+    if (parcelado) {
+      linhas.push(['Parcelamento (conta a pagar)', `${campos.numeroParcelas}x de ${moeda(valorParcela)}, 1ª em ${dataPrimeiraParcela}`]);
+    }
+    return pedirConfirmacao(linhas);
   }
 
   await session.salvarFazendaPadrao(sessao.celular, fazenda!.slug);
@@ -97,8 +111,22 @@ async function registrarDespesa(sessao: SessaoWhatsapp, campos: CamposExtraidos)
     anexoUrl: campos.anexoUrl,
   });
 
+  const respostaDespesa = `Despesa registrada: ${moeda(despesa.valor)} em ${categoria.nome} na fazenda ${fazenda!.nome}. ✅`;
+  if (!parcelado) return { resposta: respostaDespesa };
+
+  const conta = await backendClient.criarContaPagar(sessao.token, {
+    fazendaSlug: fazenda!.slug,
+    categoriaSlug: categoria.slug,
+    descricao: `${campos.descricao || categoria.nome} (parcelamento)`,
+    valor: valorParcela,
+    dataVencimento: dataPrimeiraParcela,
+    formaPagamento: campos.formaPagamento,
+    numeroParcelas: campos.numeroParcelas,
+  });
+
+  const ultima = conta.proximasParcelas?.[conta.proximasParcelas.length - 1];
   return {
-    resposta: `Despesa registrada: ${moeda(despesa.valor)} em ${categoria.nome} na fazenda ${fazenda!.nome}. ✅`,
+    resposta: `${respostaDespesa}\nParcelas geradas como conta a pagar: ${conta.totalParcelas}x de ${moeda(conta.valor)}, 1ª em ${conta.dataVencimento}${ultima ? `, última em ${ultima.dataVencimento}` : ''}.`,
   };
 }
 

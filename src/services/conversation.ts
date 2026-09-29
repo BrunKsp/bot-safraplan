@@ -204,29 +204,34 @@ export async function handleMessage({ celular, texto }: { celular: string; texto
         return resposta;
       } else {
         const correcoes = interpretarCorrecoes(texto);
+        const camposAtuais = camposAnteriores as unknown as CamposExtraidos;
 
-        if (correcoes.length === 0 && /parcel/i.test(texto) && (camposAnteriores as unknown as CamposExtraidos).intent === 'REGISTRAR_DESPESA') {
-          // Despesa é um gasto pontual — não existe "despesa parcelada" no backend, só conta a
-          // pagar. Melhor avisar do que aceitar e perder a informação do parcelamento.
-          const aviso = 'Despesa é um lançamento único, sem parcelas. Se essa compra for parcelada, registra como "conta a pagar" em vez de despesa — me diga o valor de CADA parcela, quantas parcelas e a data da 1ª, ex: "tenho uma conta de sementes de 25000 em 2x, primeira parcela dia 25".';
-          await session.limparContextoPendente(celular);
-          await history.salvarMensagem(celular, 'assistant', aviso);
-          return aviso;
-        }
+        if (correcoes.length === 0 && /parcel/i.test(texto) && camposAtuais.intent === 'REGISTRAR_DESPESA') {
+          // Compra parcelada = os dois lançamentos: a despesa em si (valor bruto, pra
+          // categorização/histórico) MAIS as parcelas como conta a pagar (pro fluxo de caixa) —
+          // ver registrarDespesa, que cria as duas coisas quando numeroParcelas vem preenchido.
+          const numeroParcelas = Number(texto.match(/(\d+)\s*x\b|(\d+)\s*vezes/i)?.[1] ?? texto.match(/(\d+)\s*x\b|(\d+)\s*vezes/i)?.[2]);
 
-        if (correcoes.length === 0) {
+          if (numeroParcelas > 1) {
+            campos = { ...camposAtuais, numeroParcelas, confirmado: false };
+          } else {
+            const aviso = 'Me diga também em quantas vezes ficou (ex: "parcelado em 2x") que eu já registro a despesa e as parcelas como conta a pagar.';
+            await history.salvarMensagem(celular, 'assistant', aviso);
+            return aviso;
+          }
+        } else if (correcoes.length === 0) {
           const dica = 'Não entendi a correção. Responda *sim* pra confirmar assim mesmo, ou me diga o campo e o valor certo (ex: "categoria: combustível"). Pode mandar mais de um por linha.';
           await history.salvarMensagem(celular, 'assistant', dica);
           return dica;
+        } else {
+          // Mantém em modo "não confirmado" — o handler vai reprocessar com os campos corrigidos
+          // e mostrar o resumo atualizado de novo, em vez de já gravar no backend.
+          campos = { ...camposAtuais };
+          for (const correcao of correcoes) {
+            (campos as unknown as Record<string, unknown>)[correcao.campo] = correcao.valor;
+          }
+          campos.confirmado = false;
         }
-
-        // Mantém em modo "não confirmado" — o handler vai reprocessar com os campos corrigidos e
-        // mostrar o resumo atualizado de novo, em vez de já gravar no backend.
-        campos = { ...camposAnteriores } as unknown as CamposExtraidos;
-        for (const correcao of correcoes) {
-          (campos as unknown as Record<string, unknown>)[correcao.campo] = correcao.valor;
-        }
-        campos.confirmado = false;
       }
     } else {
       // A mensagem atual é a resposta à pergunta que o bot fez (ex: "qual fazenda?").
