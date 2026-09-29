@@ -270,6 +270,8 @@ async function handleUazapi(req: Request, res: Response): Promise<void> {
 
   if (!ehImagem && !textoBruto?.trim()) return; // ignora figurinhas, áudio, mídia sem legenda etc.
 
+  console.log(`[webhook:uazapi] recebido celular=${celular} tipo=${ehImagem ? 'imagem' : 'texto'} texto=${JSON.stringify(textoBruto)}`);
+
   await processarEvento({
     celular,
     marcarDigitando: () => uazapi.marcarComoDigitando(celular),

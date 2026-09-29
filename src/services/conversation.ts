@@ -14,6 +14,51 @@ const FALHA_IA: CamposExtraidos = {
   resposta: 'Tive um problema para entender sua mensagem agora. Tenta de novo em instantes?',
 };
 
+const PALAVRAS_AFIRMATIVAS = ['sim', 's', 'confirma', 'confirmar', 'confirmado', 'ok', 'certo', 'isso', 'correto', 'exato', 'positivo'];
+const PALAVRAS_CANCELAMENTO_REGISTRO = ['não', 'nao', 'cancela', 'cancelar', 'errado'];
+
+// Campo que o produtor pode corrigir na etapa de confirmação (ex: "categoria: combustível") ->
+// nome real do campo em CamposExtraidos.
+const CAMPOS_CORRIGIVEIS: Record<string, keyof CamposExtraidos> = {
+  categoria: 'categoria',
+  valor: 'valor',
+  fazenda: 'fazenda',
+  descricao: 'descricao',
+  descrição: 'descricao',
+  data: 'data',
+  vencimento: 'dataVencimento',
+  datavencimento: 'dataVencimento',
+  'data de vencimento': 'dataVencimento',
+  fornecedor: 'fornecedor',
+  comprador: 'comprador',
+  produto: 'produto',
+  quantidade: 'quantidade',
+  formapagamento: 'formaPagamento',
+  'forma de pagamento': 'formaPagamento',
+  parcelas: 'numeroParcelas',
+  numeroparcelas: 'numeroParcelas',
+};
+
+const CAMPOS_NUMERICOS: Array<keyof CamposExtraidos> = ['valor', 'quantidade', 'numeroParcelas'];
+
+// Reconhece "campo: valor" ou "campo - valor" na resposta à confirmação (ex: "categoria: combustível").
+function interpretarCorrecao(texto: string): { campo: keyof CamposExtraidos; valor: string | number } | null {
+  const match = texto.trim().match(/^([a-zà-ú çã ]+?)\s*[:\-]\s*(.+)$/i);
+  if (!match) return null;
+
+  const campo = CAMPOS_CORRIGIVEIS[match[1].trim().toLowerCase()];
+  if (!campo) return null;
+
+  const valorTexto = match[2].trim();
+  if (CAMPOS_NUMERICOS.includes(campo)) {
+    const numero = Number(valorTexto.replace(/\./g, '').replace(',', '.').replace(/[^\d.]/g, ''));
+    if (Number.isNaN(numero)) return null;
+    return { campo, valor: numero };
+  }
+
+  return { campo, valor: valorTexto };
+}
+
 // A chamada ao provedor de IA (OpenAI/Anthropic/NVIDIA) é a parte mais sujeita a falhar sem
 // aviso (modelo descontinuado, rate limit, instabilidade de rede) — sem isso, qualquer erro aqui
 // derrubava a requisição inteira com um 500 genérico em vez de uma resposta conversacional.
@@ -51,6 +96,8 @@ async function resolverSessao(celular: string): Promise<SessaoWhatsapp | null> {
 // Trecho comum a mensagens de texto e de imagem: roda o handler da intenção, trata a pergunta
 // pendente (quando falta algum campo) e persiste a resposta no histórico.
 async function processarCampos(sessao: SessaoWhatsapp, celular: string, campos: CamposExtraidos): Promise<string> {
+  console.log(`[conversation] campos extraídos para ${celular}: ${JSON.stringify(campos)}`);
+
   let resultado;
   try {
     resultado = await comRenovacaoDeToken(sessao, (s) => tratarIntencao(s, campos));
@@ -103,9 +150,33 @@ export async function handleMessage({ celular, texto }: { celular: string; texto
   let campos: CamposExtraidos;
 
   if (sessao.contextoPendente) {
-    // A mensagem atual é a resposta à pergunta que o bot fez (ex: "qual fazenda?").
     const { campos: camposAnteriores, perguntando } = sessao.contextoPendente;
-    campos = { ...camposAnteriores, [perguntando]: texto.trim() } as unknown as CamposExtraidos;
+
+    if (perguntando === 'confirmacao') {
+      const respostaNormalizada = texto.trim().toLowerCase();
+
+      if (PALAVRAS_AFIRMATIVAS.includes(respostaNormalizada)) {
+        campos = { ...camposAnteriores, confirmado: true } as unknown as CamposExtraidos;
+      } else if (PALAVRAS_CANCELAMENTO_REGISTRO.includes(respostaNormalizada)) {
+        await session.limparContextoPendente(celular);
+        const resposta = 'Ok, cancelei esse lançamento. Me manda de novo com os dados certos quando quiser.';
+        await history.salvarMensagem(celular, 'assistant', resposta);
+        return resposta;
+      } else {
+        const correcao = interpretarCorrecao(texto);
+        if (!correcao) {
+          const dica = 'Não entendi a correção. Responda *sim* pra confirmar assim mesmo, ou me diga o campo e o valor certo (ex: "categoria: combustível").';
+          await history.salvarMensagem(celular, 'assistant', dica);
+          return dica;
+        }
+        // Mantém em modo "não confirmado" — o handler vai reprocessar com o campo corrigido e
+        // mostrar o resumo atualizado de novo, em vez de já gravar no backend.
+        campos = { ...camposAnteriores, [correcao.campo]: correcao.valor, confirmado: false } as unknown as CamposExtraidos;
+      }
+    } else {
+      // A mensagem atual é a resposta à pergunta que o bot fez (ex: "qual fazenda?").
+      campos = { ...camposAnteriores, [perguntando]: texto.trim() } as unknown as CamposExtraidos;
+    }
   } else {
     const historico = await history.getRecentHistory(celular);
     campos = await extrairComFallback(() => extrairIntencao(historico, texto), celular);

@@ -48,6 +48,23 @@ async function resolverFazendaOuPerguntar(sessao: SessaoWhatsapp, campos: Campos
   return { fazenda: resultado.fazenda };
 }
 
+// Todo registro (despesa, conta a pagar/receber, venda) passa por aqui antes de gravar no
+// backend — mostra um resumo do que foi entendido e só segue em frente quando `campos.confirmado`
+// vier true (setado pelo orquestrador quando o produtor responde "sim"; ver conversation.ts).
+// Isso existe porque a IA pode errar campo (ex: categoria), e sem confirmação isso ia direto pro
+// banco sem o produtor perceber.
+function pedirConfirmacao(linhas: Array<[string, string | undefined]>): ResultadoIntencao {
+  const corpo = linhas
+    .filter((linha): linha is [string, string] => Boolean(linha[1]))
+    .map(([rotulo, valor]) => `• ${rotulo}: ${valor}`)
+    .join('\n');
+
+  return {
+    perguntar: 'confirmacao',
+    pergunta: `Confere se entendi certo antes de registrar:\n\n${corpo}\n\nResponda *sim* pra confirmar, ou corrija um campo (ex: "categoria: combustível").`,
+  };
+}
+
 async function registrarDespesa(sessao: SessaoWhatsapp, campos: CamposExtraidos): Promise<ResultadoIntencao> {
   if (!campos.valor) return { resposta: 'Quanto foi o valor da despesa?' };
 
@@ -56,6 +73,17 @@ async function registrarDespesa(sessao: SessaoWhatsapp, campos: CamposExtraidos)
   if (perguntar) return { perguntar, pergunta };
 
   const categoria = await resolverCategoria(sessao.token, campos.categoria);
+
+  if (!campos.confirmado) {
+    return pedirConfirmacao([
+      ['Valor', moeda(campos.valor)],
+      ['Categoria', categoria.nome],
+      ['Fazenda', fazenda!.nome],
+      ['Data', campos.data || hojeISO()],
+      ['Descrição', campos.descricao || categoria.nome],
+      ['Forma de pagamento', campos.formaPagamento || 'OUTRO'],
+    ]);
+  }
 
   await session.salvarFazendaPadrao(sessao.celular, fazenda!.slug);
 
@@ -81,6 +109,17 @@ async function registrarContaPagar(sessao: SessaoWhatsapp, campos: CamposExtraid
   const { fazenda, perguntar, pergunta, resposta } = await resolverFazendaOuPerguntar(sessao, campos);
   if (resposta) return { resposta };
   if (perguntar) return { perguntar, pergunta };
+
+  if (!campos.confirmado) {
+    return pedirConfirmacao([
+      ['Valor', campos.numeroParcelas && campos.numeroParcelas > 1 ? `${moeda(campos.valor)} x${campos.numeroParcelas}` : moeda(campos.valor)],
+      ['Fazenda', fazenda!.nome],
+      ['Vencimento (1ª parcela)', campos.dataVencimento],
+      ['Descrição', campos.descricao || 'Conta a pagar'],
+      ['Fornecedor', campos.fornecedor],
+      ['Forma de pagamento', campos.formaPagamento],
+    ]);
+  }
 
   await session.salvarFazendaPadrao(sessao.celular, fazenda!.slug);
 
@@ -111,6 +150,16 @@ async function registrarContaReceber(sessao: SessaoWhatsapp, campos: CamposExtra
   const { fazenda, perguntar, pergunta, resposta } = await resolverFazendaOuPerguntar(sessao, campos);
   if (resposta) return { resposta };
   if (perguntar) return { perguntar, pergunta };
+
+  if (!campos.confirmado) {
+    return pedirConfirmacao([
+      ['Valor', campos.numeroParcelas && campos.numeroParcelas > 1 ? `${moeda(campos.valor)} x${campos.numeroParcelas}` : moeda(campos.valor)],
+      ['Fazenda', fazenda!.nome],
+      ['Previsto (1ª parcela)', campos.dataVencimento],
+      ['Descrição', campos.descricao || 'Conta a receber'],
+      ['Comprador', campos.comprador],
+    ]);
+  }
 
   await session.salvarFazendaPadrao(sessao.celular, fazenda!.slug);
 
@@ -144,6 +193,18 @@ async function registrarVenda(sessao: SessaoWhatsapp, campos: CamposExtraidos): 
 
   const produtoResolvido = await resolverProduto(sessao.token, campos.produto);
   if (produtoResolvido.erro) return { resposta: produtoResolvido.erro };
+
+  if (!campos.confirmado) {
+    return pedirConfirmacao([
+      ['Produto', produtoResolvido.produto!.nome],
+      ['Quantidade', `${campos.quantidade} ${campos.unidadeMedida || produtoResolvido.produto!.unidadeMedida}`],
+      ['Preço unitário', moeda(campos.valor)],
+      ['Fazenda', fazenda!.nome],
+      ['Data', campos.data || hojeISO()],
+      ['Comprador', campos.comprador],
+      ['Já recebeu o pagamento?', campos.gerarContaReceber ? 'Sim' : 'Não'],
+    ]);
+  }
 
   await session.salvarFazendaPadrao(sessao.celular, fazenda!.slug);
 

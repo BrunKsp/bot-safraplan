@@ -43,6 +43,10 @@ export interface CamposExtraidos {
   // uma conta por parcela (vencimentos mensais a partir de "dataVencimento").
   numeroParcelas?: number;
   resposta?: string;
+  // Preenchido pelo orquestrador (não pela IA) quando o produtor confirma o resumo do lançamento
+  // — não faz parte do schema de tool-calling. Enquanto ausente/false, os handlers de registro
+  // (despesa, conta a pagar/receber, venda) só mostram um resumo e pedem confirmação.
+  confirmado?: boolean;
   // Preenchido pelo orquestrador (não pela IA) quando a mensagem era uma foto e o upload para o
   // R2 deu certo — não faz parte do schema de tool-calling.
   anexoUrl?: string;
@@ -144,6 +148,7 @@ Sua única função é chamar a ferramenta "gerar_insights" com 3 a 4 frases cur
 async function gerarInsightsComOpenAI(resumo: ResumoFinanceiro): Promise<Insights> {
   const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
+  const inicioMs = Date.now();
   const response = await client.chat.completions.create({
     model: 'gpt-4o-mini',
     messages: [
@@ -153,6 +158,7 @@ async function gerarInsightsComOpenAI(resumo: ResumoFinanceiro): Promise<Insight
     tools: [{ type: 'function', function: { name: 'gerar_insights', description: 'Registra os insights financeiros gerados.', parameters: INSIGHTS_PARAMETROS } }],
     tool_choice: { type: 'function', function: { name: 'gerar_insights' } },
   });
+  logChamadaCompativelOpenAI('gerarInsights:openai', inicioMs, response);
 
   const toolCall = response.choices[0].message.tool_calls?.[0];
   if (!toolCall || toolCall.type !== 'function') return { insights: [] };
@@ -258,6 +264,7 @@ const NAO_ENTENDI_FALLBACK: CamposExtraidos = { intent: 'NAO_ENTENDI', resposta:
 async function extrairComOpenAI(historico: MensagemHistorico[], mensagem: string): Promise<CamposExtraidos> {
   const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
+  const inicioMs = Date.now();
   const response = await client.chat.completions.create({
     model: 'gpt-4o-mini',
     messages: [
@@ -277,6 +284,7 @@ async function extrairComOpenAI(historico: MensagemHistorico[], mensagem: string
     ],
     tool_choice: { type: 'function', function: { name: 'interpretar_mensagem' } },
   });
+  logChamadaCompativelOpenAI('extrairIntencao:openai', inicioMs, response);
 
   const toolCall = response.choices[0].message.tool_calls?.[0];
   if (!toolCall || toolCall.type !== 'function') return NAO_ENTENDI_FALLBACK;
@@ -438,6 +446,7 @@ Se a imagem não for legível ou não parecer um documento financeiro, use inten
 async function classificarImagemComOpenAI(base64: string, mimeType: string): Promise<CamposExtraidos> {
   const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
+  const inicioMs = Date.now();
   const response = await client.chat.completions.create({
     model: 'gpt-4o-mini',
     messages: [
@@ -462,6 +471,7 @@ async function classificarImagemComOpenAI(base64: string, mimeType: string): Pro
     ],
     tool_choice: { type: 'function', function: { name: 'interpretar_mensagem' } },
   });
+  logChamadaCompativelOpenAI('classificarImagem:openai', inicioMs, response);
 
   const toolCall = response.choices[0].message.tool_calls?.[0];
   if (!toolCall || toolCall.type !== 'function') return NAO_ENTENDI_FALLBACK;
