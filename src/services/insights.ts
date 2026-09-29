@@ -65,15 +65,29 @@ function agruparPorCategoria(despesas: any[], nomePorCategoriaId: Map<string, st
   return totais;
 }
 
+// Roda as chamadas ao backend-safraplan em paralelo, mas identificadas — sem isso, um erro
+// genérico ("Erro interno do servidor") não dizia qual das 4 chamadas (categorias, despesas do
+// mês atual/anterior, contas a pagar) de fato falhou, nem o motivo real (status/corpo da resposta).
+async function chamadaIdentificada<T>(rotulo: string, promessa: Promise<T>): Promise<T> {
+  try {
+    return await promessa;
+  } catch (err: any) {
+    console.error(
+      `[insights] falha em "${rotulo}": status=${err.response?.status} url=${err.config?.url} params=${JSON.stringify(err.config?.params)} body=${JSON.stringify(err.response?.data)} message=${err.message}`
+    );
+    throw err;
+  }
+}
+
 export async function gerarInsightsDoMes(sessao: SessaoWhatsapp): Promise<{ insights: string[]; resumo: Resumo }> {
   const { token } = sessao;
   const { inicioMesAtual, fimMesAtual, inicioMesAnterior, fimMesAnterior } = limitesDoMes();
 
   const [categorias, despesasMesAtual, despesasMesAnterior, contasVencendo] = await Promise.all([
-    backendClient.listarCategorias(token),
-    buscarTodasDespesas(token, { dataInicio: inicioMesAtual, dataFim: fimMesAtual }),
-    buscarTodasDespesas(token, { dataInicio: inicioMesAnterior, dataFim: fimMesAnterior }),
-    backendClient.listarContasPagar(token, { vencendoEm: 7 }),
+    chamadaIdentificada('listarCategorias', backendClient.listarCategorias(token)),
+    chamadaIdentificada('despesasMesAtual', buscarTodasDespesas(token, { dataInicio: inicioMesAtual, dataFim: fimMesAtual })),
+    chamadaIdentificada('despesasMesAnterior', buscarTodasDespesas(token, { dataInicio: inicioMesAnterior, dataFim: fimMesAnterior })),
+    chamadaIdentificada('listarContasPagar', backendClient.listarContasPagar(token, { vencendoEm: 7 })),
   ]);
 
   const nomePorCategoriaId = new Map(categorias.map((categoria) => [categoria.id, categoria.nome]));

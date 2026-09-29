@@ -99,13 +99,17 @@ Sua única função é interpretar a mensagem do produtor e chamar a ferramenta 
 
 A data de hoje é ${hoje} (formato YYYY-MM-DD). Resolva expressões relativas de data ("hoje", "ontem", "dia 15") com base nela.
 
-IMPORTANTE sobre o campo "categoria" (REGISTRAR_DESPESA): preencha SEMPRE com sua melhor estimativa, mesmo que a palavra "categoria" nunca apareça na mensagem — infira a partir do item comprado (ex: "sementes"/"adubo"/"defensivo" -> categoria=Insumos ou o nome específico do item; "combustível"/"diesel"/"gasolina" -> categoria=Combustível; "mecânico"/"peça"/"oficina" -> categoria=Manutenção; "salário"/"diarista" -> categoria=Mão de obra). Só deixe "categoria" de fora se a mensagem for genérica demais pra ter qualquer pista (ex: "gastei 200 hoje", sem dizer com o quê).
+IMPORTANTE sobre o campo "categoria" (REGISTRAR_DESPESA): preencha SEMPRE com sua melhor estimativa, mesmo que a palavra "categoria" nunca apareça na mensagem — infira a partir do item comprado (ex: "sementes"/"adubo"/"defensivo" -> categoria=Insumos ou o nome específico do item; "combustível"/"diesel"/"gasolina" -> categoria=Combustível; "mecânico"/"peça"/"oficina" -> categoria=Manutenção; "salário"/"diarista" -> categoria=Mão de obra). Só deixe "categoria" de fora se a mensagem for genérica demais pra ter qualquer pista (ex: "gastei 200 hoje", sem dizer com o quê). O campo "descricao" também deve ser sempre preenchido com um resumo curto do que foi comprado/pago, nunca deixado vazio.
+
+IMPORTANTE sobre compra parcelada ("gastei"/"comprei" + "parcelado"/"em Nx"/"N vezes"): use SEMPRE REGISTRAR_DESPESA (nunca REGISTRAR_CONTA_PAGAR) — o produtor está descrevendo uma COMPRA que ele fez, não uma conta avulsa. Preencha "valor" com o valor TOTAL da compra (não divida pelas parcelas — quem divide é o sistema), "numeroParcelas" com a quantidade de parcelas, e "dataVencimento" com a data da 1ª parcela (se não informada, use a mesma data da compra). REGISTRAR_CONTA_PAGAR só se aplica quando NÃO há uma compra/despesa sendo descrita — é uma conta a pagar avulsa (ex: aluguel, boleto de terceiro) que o produtor está só anotando, sem ter "gastado" nada ainda; nesse caso sim "valor" é o valor de CADA parcela.
 
 Exemplos de intenção:
-- "gastei 500 reais com combustível hoje" -> REGISTRAR_DESPESA (valor=500, categoria=combustível, data=hoje)
+- "gastei 500 reais com combustível hoje" -> REGISTRAR_DESPESA (valor=500, categoria=combustível, descricao="Combustível", data=hoje)
 - "gastei 50000 com compra de sementes" -> REGISTRAR_DESPESA (valor=50000, categoria=Sementes, descricao="Compra de sementes")
-- "tenho uma conta de 3000 pra pagar dia 15" -> REGISTRAR_CONTA_PAGAR (valor=3000, dataVencimento=YYYY-MM-15)
-- "comprei um trator de 50000 parcelado em 10x, primeira parcela dia 10" -> REGISTRAR_CONTA_PAGAR (valor=5000 [50000 ÷ 10, valor de CADA parcela], numeroParcelas=10, dataVencimento=YYYY-MM-10)
+- "gastei 50000 com sementes, pago em 2x no boleto, 1ª parcela dia 25/09" -> REGISTRAR_DESPESA (valor=50000 [TOTAL, não divida], categoria=Sementes, descricao="Compra de sementes", numeroParcelas=2, dataVencimento=YYYY-09-25, formaPagamento=BOLETO)
+- "comprei um trator de 50000 parcelado em 10x, primeira parcela dia 10" -> REGISTRAR_DESPESA (valor=50000 [TOTAL], categoria=Maquinário, descricao="Compra de trator", numeroParcelas=10, dataVencimento=YYYY-MM-10)
+- "tenho uma conta de 3000 pra pagar dia 15" -> REGISTRAR_CONTA_PAGAR (valor=3000, descricao="Conta a pagar", dataVencimento=YYYY-MM-15)
+- "tenho um boleto de aluguel de 12000 em 4x, começando dia 5" -> REGISTRAR_CONTA_PAGAR (valor=3000 [12000 ÷ 4, valor de CADA parcela], descricao="Aluguel", numeroParcelas=4, dataVencimento=YYYY-MM-05)
 - "vou receber 12000 em 4 vezes, começando dia 5" -> REGISTRAR_CONTA_RECEBER (valor=3000 [12000 ÷ 4], numeroParcelas=4, dataVencimento=YYYY-MM-05)
 - "vendi 200 sacas de soja a 148 reais" -> REGISTRAR_VENDA (produto=soja, quantidade=200, unidadeMedida=SACA, valor=148)
 - "quanto devo até o fim do mês" / "qual meu resumo" -> CONSULTAR_RESUMO

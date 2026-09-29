@@ -70,11 +70,22 @@ interface ProcessarEventoParams {
   processar: () => Promise<string>;
 }
 
+const ATRASO_RESPOSTA_MS = 10_000;
+
+function aguardar(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function processarEvento({ celular, marcarDigitando, enviarResposta, processar }: ProcessarEventoParams): Promise<void> {
   try {
     await marcarDigitando();
     const resposta = await processar();
-    if (resposta) await enviarResposta(resposta);
+    // Atraso proposital antes de responder — resposta instantânea demais (típica de bot) chama
+    // mais atenção do que uma pausa parecida com alguém digitando/pensando antes de responder.
+    if (resposta) {
+      await aguardar(ATRASO_RESPOSTA_MS);
+      await enviarResposta(resposta);
+    }
   } catch (err: any) {
     console.error(`Erro ao processar mensagem de ${celular}:`, err.message);
     try {
