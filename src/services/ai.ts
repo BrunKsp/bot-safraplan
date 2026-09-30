@@ -4,7 +4,7 @@
 // A IA sempre "chama uma ferramenta" (function/tool calling) em vez de responder em texto livre —
 // isso garante que a saída seja sempre um JSON previsível que o restante do bot sabe processar.
 
-import OpenAI from 'openai';
+import OpenAI, { toFile } from 'openai';
 import Anthropic from '@anthropic-ai/sdk';
 import { MensagemHistorico } from './history';
 
@@ -443,13 +443,18 @@ export async function extrairIntencao(historico: MensagemHistorico[], mensagem: 
 function buildImageSystemPrompt(hoje: string): string {
   return `Você é o SafraBot, assistente de WhatsApp do SafraPlan — sistema de gestão financeira para produtores rurais.
 
-O produtor te enviou uma FOTO em vez de texto. A imagem costuma ser uma nota fiscal, recibo, cupom fiscal ou comprovante de pagamento (ex: PIX, boleto pago). Examine a imagem e extraia os campos estruturados, do mesmo jeito que faria para uma mensagem de texto equivalente.
+O produtor te enviou uma FOTO em vez de texto. A imagem pode ser de dois tipos bem diferentes:
+(a) um documento IMPRESSO — nota fiscal, recibo, cupom fiscal, comprovante de pagamento (PIX, boleto pago); ou
+(b) uma ANOTAÇÃO MANUSCRITA — uma página de caderno/bloco onde o produtor escreveu à mão o que gastou (ex: "Sementes 5000", "Diesel 25/09 R$ 800").
+Examine a imagem, identifique qual dos dois casos é, e extraia os campos estruturados do mesmo jeito que faria para uma mensagem de texto equivalente.
 
 A data de hoje é ${hoje} (formato YYYY-MM-DD). Se a imagem tiver uma data visível, use-a; senão use a data de hoje.
 
 Na grande maioria dos casos a intenção correta é REGISTRAR_DESPESA (valor total, descrição do que foi comprado, categoria — ex: combustível, insumos, manutenção — e forma de pagamento se visível no comprovante).
 
-IMPORTANTE sobre o campo "valor": use SEMPRE o valor total IMPRESSO no documento (linha "VALOR TOTAL", "TOTAL A PAGAR" ou equivalente). Anotações escritas à mão, números circulados/rabiscados ou rasurados no verso ou nas bordas do cupom NÃO são o valor da despesa — ignore-os completamente, mesmo que pareçam mais em destaque que o total impresso.
+IMPORTANTE sobre o campo "valor" — a regra muda conforme o tipo de imagem:
+- Se for um documento IMPRESSO (nota fiscal/cupom/comprovante): use SEMPRE o valor total IMPRESSO (linha "VALOR TOTAL", "TOTAL A PAGAR" ou equivalente). Rabiscos, números circulados ou anotações à mão feitas NAS BORDAS/VERSO desse documento impresso NÃO são o valor da despesa — ignore-os, mesmo que pareçam mais em destaque que o total impresso (produtor às vezes anota outra coisa ali, tipo hodômetro ou número de nota).
+- Se a imagem for uma ANOTAÇÃO MANUSCRITA (sem nenhum documento impresso — só a letra do produtor numa folha/caderno): aí sim leia a escrita à mão normalmente como a fonte principal do valor, data, item etc. — é a única informação disponível nesse caso.
 
 IMPORTANTE sobre o campo "fazenda": é a propriedade rural do PRODUTOR — essa informação NUNCA está impressa num cupom fiscal, recibo ou comprovante de pagamento, então NUNCA preencha "fazenda" a partir de texto impresso na imagem. Isso inclui, sem exceção: nome do estabelecimento (ex: "Posto Extremoz"), endereço, CNPJ, razão social, nome do banco/adquirente/bandeira do cartão, e qualquer outro texto impresso — mesmo que pareça um nome próprio ou lembre um termo agrícola. NUNCA use "SafraPlan", "SafraBot" ou qualquer variação do nome do sistema/assistente (mencionados acima neste prompt) como valor de "fazenda" — não existe relação entre o nome do produto e a propriedade do produtor. Na dúvida, deixe "fazenda" de fora — o sistema pergunta ao produtor depois, se precisar. Só preencha "fazenda" se o produtor tiver escrito à mão, à parte, algo como "fazenda: X" ou anotado claramente o nome da propriedade. O nome do estabelecimento pode entrar em "descricao" (ex: "Abastecimento no Posto Extremoz"), nunca em "fazenda".
 
@@ -655,4 +660,54 @@ async function classificarImagemComProvider(base64: string, mimeType: string): P
 
   if (!process.env.OPENAI_API_KEY) return IMAGEM_SEM_PROVEDOR_VISAO;
   return classificarImagemComOpenAI(base64, mimeType);
+}
+
+// ─── Transcrição de áudio (mensagem de voz recebida pelo WhatsApp) ─────────────────────────────
+
+// Só implementado via Whisper da OpenAI por enquanto — os outros providers (NVIDIA/OpenRouter/
+// Claude) não têm um endpoint de transcrição equivalente já integrado aqui. Se AI_PROVIDER não
+// for "openai" (ou faltar a chave), retorna null e quem chamou decide a mensagem de fallback.
+async function transcreverAudioComOpenAI(buffer: Buffer, mimeType: string): Promise<string> {
+  const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+  const extensao = mimeType.includes('mp3')
+    ? 'mp3'
+    : mimeType.includes('mp4') || mimeType.includes('m4a')
+      ? 'm4a'
+      : mimeType.includes('wav')
+        ? 'wav'
+        : 'ogg'; // WhatsApp manda áudio de voz como ogg/opus na grande maioria dos casos
+
+  const arquivo = await toFile(buffer, `audio.${extensao}`, { type: mimeType });
+
+  const inicioMs = Date.now();
+  const resposta = await client.audio.transcriptions.create({
+    file: arquivo,
+    model: 'whisper-1',
+    language: 'pt',
+  });
+  console.log(`[ia:transcreverAudio:openai] duracaoMs=${Date.now() - inicioMs} texto=${JSON.stringify(resposta.text)}`);
+
+  return resposta.text;
+}
+
+// Transcreve um áudio recebido pelo WhatsApp pra texto, usando o provedor configurado em
+// AI_PROVIDER — retorna null se o provedor atual não suportar transcrição (aí quem chamou decide
+// a mensagem de fallback) ou se a chamada falhar.
+export async function transcreverAudio(buffer: Buffer, mimeType: string): Promise<string | null> {
+  const provider = process.env.AI_PROVIDER || 'openai';
+
+  if (provider !== 'openai') {
+    console.error(`Transcrição de áudio não implementada para AI_PROVIDER=${provider}.`);
+    return null;
+  }
+
+  if (!process.env.OPENAI_API_KEY) return null;
+
+  try {
+    return await transcreverAudioComOpenAI(buffer, mimeType);
+  } catch (err: any) {
+    console.error('Erro ao transcrever áudio:', err.response?.data || err.message);
+    return null;
+  }
 }

@@ -23,6 +23,7 @@
 import crypto from 'crypto';
 import express, { Request, Response } from 'express';
 import { handleMessage, handleImageMessage } from '../services/conversation';
+import { transcreverAudio } from '../services/ai';
 import * as waha from '../services/waha';
 import * as meta from '../services/meta';
 import * as twilio from '../services/twilio';
@@ -278,10 +279,11 @@ async function handleUazapi(req: Request, res: Response): Promise<void> {
 
   const textoBruto = mensagem.text ?? (typeof mensagem.content === 'string' ? mensagem.content : undefined);
   const ehImagem = mensagem.messageType === 'ImageMessage' && typeof mensagem.content === 'object' && !!mensagem.content;
+  const ehAudio = mensagem.messageType === 'AudioMessage' && typeof mensagem.content === 'object' && !!mensagem.content;
 
-  if (!ehImagem && !textoBruto?.trim()) return; // ignora figurinhas, áudio, mídia sem legenda etc.
+  if (!ehImagem && !ehAudio && !textoBruto?.trim()) return; // ignora figurinhas, mídia sem legenda etc.
 
-  console.log(`[webhook:uazapi] recebido celular=${celular} tipo=${ehImagem ? 'imagem' : 'texto'} texto=${JSON.stringify(textoBruto)}`);
+  console.log(`[webhook:uazapi] recebido celular=${celular} tipo=${ehImagem ? 'imagem' : ehAudio ? 'audio' : 'texto'} texto=${JSON.stringify(textoBruto)}`);
 
   await processarEvento({
     celular,
@@ -291,6 +293,15 @@ async function handleUazapi(req: Request, res: Response): Promise<void> {
       if (ehImagem) {
         const { buffer, mimeType } = await uazapi.baixarMidia(mensagem.messageid ?? '', mensagem.content as ConteudoMidiaUazapi);
         return handleImageMessage({ celular, buffer, mimeType });
+      }
+      if (ehAudio) {
+        const { buffer, mimeType } = await uazapi.baixarMidia(mensagem.messageid ?? '', mensagem.content as ConteudoMidiaUazapi);
+        const transcricao = await transcreverAudio(buffer, mimeType);
+        if (!transcricao?.trim()) {
+          return 'Não consegui entender o áudio — pode tentar mandar por texto?';
+        }
+        console.log(`[webhook:uazapi] áudio transcrito celular=${celular} texto=${JSON.stringify(transcricao)}`);
+        return handleMessage({ celular, texto: transcricao.trim() });
       }
       return handleMessage({ celular, texto: textoBruto!.trim() });
     },
