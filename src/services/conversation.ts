@@ -219,6 +219,22 @@ export async function handleMessage({ celular, texto }: { celular: string; texto
             await history.salvarMensagem(celular, 'assistant', aviso);
             return aviso;
           }
+        } else if (correcoes.length === 0 && texto.trim().split(/\s+/).length >= 4) {
+          // Não bate com "sim"/"não"/"campo: valor" — mas é uma frase longa, não uma resposta
+          // curta. Provavelmente a pessoa está reenviando o pedido do zero (ex: corrigindo o
+          // valor direto na frase, "registrar entrada de 160 mil..."), não tentando corrigir um
+          // campo específico. Descarta a confirmação pendente e reprocessa como mensagem nova.
+          const historico = await history.getRecentHistory(celular);
+          const novosCampos = await extrairComFallback(() => extrairIntencao(historico, texto), celular);
+
+          if (novosCampos.intent !== 'NAO_ENTENDI') {
+            await session.limparContextoPendente(celular);
+            return processarCampos(sessao, celular, novosCampos);
+          }
+
+          const dica = 'Não entendi a correção. Responda *sim* pra confirmar assim mesmo, ou me diga o campo e o valor certo (ex: "categoria: combustível"). Pode mandar mais de um por linha.';
+          await history.salvarMensagem(celular, 'assistant', dica);
+          return dica;
         } else if (correcoes.length === 0) {
           const dica = 'Não entendi a correção. Responda *sim* pra confirmar assim mesmo, ou me diga o campo e o valor certo (ex: "categoria: combustível"). Pode mandar mais de um por linha.';
           await history.salvarMensagem(celular, 'assistant', dica);
