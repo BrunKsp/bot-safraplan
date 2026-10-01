@@ -43,6 +43,10 @@ export interface CamposExtraidos {
   // Só se aplica a REGISTRAR_CONTA_PAGAR/REGISTRAR_CONTA_RECEBER — quando presente e > 1, gera
   // uma conta por parcela (vencimentos mensais a partir de "dataVencimento").
   numeroParcelas?: number;
+  // Só se aplica a REGISTRAR_CONTA_RECEBER — true quando o produtor descreve dinheiro que JÁ
+  // entrou (ex: "entrada de 160 mil", "recebi", "caiu na conta"), não uma expectativa futura. A
+  // conta é criada e já marcada como recebida na hora, em vez de ficar pendente.
+  jaRecebido?: boolean;
   resposta?: string;
   // Preenchido pelo orquestrador (não pela IA) quando o produtor confirma o resumo do lançamento
   // — não faz parte do schema de tool-calling. Enquanto ausente/false, os handlers de registro
@@ -89,6 +93,7 @@ const PARAMETROS = {
     unidadeMedida: { type: 'string', enum: UNIDADES, description: 'Unidade de medida da quantidade/produto.' },
     gerarContaReceber: { type: 'boolean', description: 'true se o produtor deu a entender que já recebeu o pagamento da venda.' },
     numeroParcelas: { type: 'number', description: 'Número de parcelas, só para REGISTRAR_CONTA_PAGAR/REGISTRAR_CONTA_RECEBER (ex: "em 10x", "parcelado em 3 vezes"). Se o produtor disser o valor TOTAL da compra/venda, calcule e preencha "valor" com o valor de CADA parcela (total dividido por numeroParcelas), nunca o total.' },
+    jaRecebido: { type: 'boolean', description: 'Só para REGISTRAR_CONTA_RECEBER — true se o dinheiro JÁ entrou (ex: "entrada de", "recebi", "caiu na conta"), false/ausente se for uma expectativa futura ("vou receber", "o cliente vai pagar dia X").' },
     resposta: { type: 'string', description: 'Resposta curta e amigável em português para o caso de SAUDACAO, AJUDA ou NAO_ENTENDI. Ignorado nos outros intents.' },
   },
   required: ['intent'],
@@ -116,6 +121,7 @@ Exemplos de intenção:
 - "tenho uma conta de 3000 pra pagar dia 15" -> REGISTRAR_CONTA_PAGAR (valor=3000, descricao="Conta a pagar", dataVencimento=YYYY-MM-15)
 - "tenho um boleto de aluguel de 12000 em 4x, começando dia 5" -> REGISTRAR_CONTA_PAGAR (valor=3000 [12000 ÷ 4, valor de CADA parcela], descricao="Aluguel", numeroParcelas=4, dataVencimento=YYYY-MM-05)
 - "vou receber 12000 em 4 vezes, começando dia 5" -> REGISTRAR_CONTA_RECEBER (valor=3000 [12000 ÷ 4], numeroParcelas=4, dataVencimento=YYYY-MM-05)
+- "quero registrar entrada de 160 mil em venda de soja" / "recebi 160 mil da venda da soja" -> REGISTRAR_CONTA_RECEBER (valor=160000, descricao="Venda de soja", dataVencimento=hoje, jaRecebido=true) — SEM quantidade/produto estruturado (não é uma venda detalhada tipo "sacas a X reais"), é só um valor total que já entrou.
 - "vendi 200 sacas de soja a 148 reais" -> REGISTRAR_VENDA (produto=soja, quantidade=200, unidadeMedida=SACA, valor=148)
 - "marque como pago a primeira parcela das sementes" / "já paguei a conta do fornecedor X" -> MARCAR_CONTA_PAGA (descricao="primeira parcela sementes" ou o texto que identifica a conta já existente, data=hoje se não disser quando pagou). NUNCA use REGISTRAR_DESPESA/REGISTRAR_CONTA_PAGAR pra isso — é sobre uma conta que JÁ existe, não um lançamento novo.
 - "quanto devo até o fim do mês" / "qual meu resumo" -> CONSULTAR_RESUMO
