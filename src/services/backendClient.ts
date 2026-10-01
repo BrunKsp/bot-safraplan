@@ -114,6 +114,11 @@ export async function criarContaReceber(token: string, payload: Record<string, u
   return data;
 }
 
+export async function receberContaReceber(token: string, slug: string, payload: Record<string, unknown>): Promise<any> {
+  const { data } = await api.patch(`/contas-receber/${slug}/receber`, payload, comToken(token));
+  return data;
+}
+
 export async function criarVenda(token: string, payload: Record<string, unknown>): Promise<any> {
   const { data } = await api.post('/vendas', payload, comToken(token));
   return data;

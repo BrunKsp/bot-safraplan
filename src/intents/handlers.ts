@@ -184,22 +184,32 @@ async function registrarContaPagar(sessao: SessaoWhatsapp, campos: CamposExtraid
 
 async function registrarContaReceber(sessao: SessaoWhatsapp, campos: CamposExtraidos): Promise<ResultadoIntencao> {
   if (!campos.valor) return { resposta: 'Quanto é o valor a receber?' };
-  if (!campos.dataVencimento) return { resposta: 'Pra quando é o previsto?' };
+
+  // "Entrada de X" / "recebi X" = dinheiro que já caiu, não uma previsão futura — não faz sentido
+  // pedir "pra quando é o previsto?" nesse caso, já assume hoje se não disser outra data.
+  const jaRecebido = Boolean(campos.jaRecebido);
+  if (!jaRecebido && !campos.dataVencimento) return { resposta: 'Pra quando é o previsto?' };
 
   const { fazenda, perguntar, pergunta, resposta } = await resolverFazendaOuPerguntar(sessao, campos);
   if (resposta) return { resposta };
   if (perguntar) return { perguntar, pergunta };
 
   campos.descricao = campos.descricao || 'Conta a receber';
+  if (jaRecebido) {
+    campos.data = campos.data || hojeISO();
+    campos.dataVencimento = campos.dataVencimento || campos.data;
+  }
 
   if (!campos.confirmado) {
-    return pedirConfirmacao([
+    const linhas: Array<[string, string | undefined]> = [
       ['Valor', campos.numeroParcelas && campos.numeroParcelas > 1 ? `${moeda(campos.valor)} x${campos.numeroParcelas}` : moeda(campos.valor)],
       ['Fazenda', fazenda!.nome],
-      ['Previsto (1ª parcela)', campos.dataVencimento],
+      [jaRecebido ? 'Data do recebimento' : 'Previsto (1ª parcela)', jaRecebido ? campos.data : campos.dataVencimento],
       ['Descrição', campos.descricao],
       ['Comprador', campos.comprador],
-    ]);
+    ];
+    if (jaRecebido) linhas.push(['Status', 'Já recebido']);
+    return pedirConfirmacao(linhas);
   }
 
   await session.salvarFazendaPadrao(sessao.celular, fazenda!.slug);
@@ -212,6 +222,13 @@ async function registrarContaReceber(sessao: SessaoWhatsapp, campos: CamposExtra
     comprador: campos.comprador,
     numeroParcelas: campos.numeroParcelas,
   });
+
+  if (jaRecebido) {
+    const recebida = await backendClient.receberContaReceber(sessao.token, conta.slug, {
+      dataRecebimento: campos.data,
+    });
+    return { resposta: `Entrada registrada: ${moeda(recebida.valor)} recebidos em ${recebida.dataRecebimento} (${recebida.descricao}). ✅` };
+  }
 
   if (conta.totalParcelas > 1) {
     const ultima = conta.proximasParcelas?.[conta.proximasParcelas.length - 1];
