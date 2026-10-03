@@ -5,6 +5,7 @@ import autenticarServico from '../middlewares/autenticarServico';
 import * as twilio from '../services/twilio';
 import * as uazapi from '../services/uazapi';
 import * as waha from '../services/waha';
+import * as numerosNaoCadastrados from '../services/numerosNaoCadastrados';
 
 const router = express.Router();
 
@@ -83,6 +84,20 @@ router.post('/whatsapp/enviar', async (req: Request, res: Response) => {
     console.error(`Erro ao enviar mensagem para ${celular}:`, err.response?.data || err.message);
     res.status(502).json({ erro: 'Não consegui enviar a mensagem pelo WhatsApp agora.' });
   }
+});
+
+// Números sem conta que já foram avisados (e por isso estão silenciados pelo bot — ver
+// numerosNaoCadastrados.ts). Usado pra checar/remover números que entraram em contato (ex: robôs
+// de cobrança) e, no caso de "desbanir" um número de verdade, liberar ele pra receber resposta de novo.
+router.get('/numeros-bloqueados', async (_req: Request, res: Response) => {
+  const bloqueados = await numerosNaoCadastrados.listarBloqueados();
+  res.json(bloqueados);
+});
+
+router.delete('/numeros-bloqueados/:celular', async (req: Request, res: Response) => {
+  const removido = await numerosNaoCadastrados.desbloquear(req.params.celular);
+  if (!removido) return res.status(404).json({ erro: 'Número não encontrado na lista de bloqueados.' });
+  res.json({ desbloqueado: true });
 });
 
 export default router;
