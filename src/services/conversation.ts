@@ -37,9 +37,38 @@ const CAMPOS_CORRIGIVEIS: Record<string, keyof CamposExtraidos> = {
   'forma de pagamento': 'formaPagamento',
   parcelas: 'numeroParcelas',
   numeroparcelas: 'numeroParcelas',
+  // Alerta de preço
+  cultura: 'cultura',
+  precoalvo: 'precoAlvo',
+  'preço alvo': 'precoAlvo',
+  'preco alvo': 'precoAlvo',
+  condicao: 'condicaoAlerta',
+  condição: 'condicaoAlerta',
+  // Máquina
+  nome: 'maquinaNome',
+  tipo: 'maquinaTipo',
+  marca: 'maquinaMarca',
+  modelo: 'maquinaModelo',
+  ano: 'maquinaAnoFabricacao',
+  anofabricacao: 'maquinaAnoFabricacao',
+  'ano de fabricação': 'maquinaAnoFabricacao',
+  valoraquisicao: 'maquinaValorAquisicao',
+  'valor de aquisição': 'maquinaValorAquisicao',
+  'valor aquisição': 'maquinaValorAquisicao',
+  dataaquisicao: 'maquinaDataAquisicao',
+  'data de aquisição': 'maquinaDataAquisicao',
+  'data aquisição': 'maquinaDataAquisicao',
+  vidautil: 'maquinaVidaUtilAnos',
+  'vida útil': 'maquinaVidaUtilAnos',
+  'vida util': 'maquinaVidaUtilAnos',
+  valorresidual: 'maquinaValorResidual',
+  'valor residual': 'maquinaValorResidual',
 };
 
-const CAMPOS_NUMERICOS: Array<keyof CamposExtraidos> = ['valor', 'quantidade', 'numeroParcelas'];
+const CAMPOS_NUMERICOS: Array<keyof CamposExtraidos> = [
+  'valor', 'quantidade', 'numeroParcelas',
+  'precoAlvo', 'maquinaValorAquisicao', 'maquinaAnoFabricacao', 'maquinaVidaUtilAnos', 'maquinaValorResidual',
+];
 
 const FORMAS_PAGAMENTO_PALAVRAS: Record<string, FormaPagamento> = {
   dinheiro: 'DINHEIRO',
@@ -206,8 +235,9 @@ export async function handleMessage({ celular, texto }: { celular: string; texto
           // curta. Provavelmente a pessoa está reenviando o pedido do zero (ex: corrigindo o
           // valor direto na frase, "registrar entrada de 160 mil..."), não tentando corrigir um
           // campo específico. Descarta a confirmação pendente e reprocessa como mensagem nova.
-          const historico = await history.getRecentHistory(celular);
-          const novosCampos = await extrairComFallback(() => extrairIntencao(historico, texto), celular);
+          // Propositalmente sem histórico: evita que contexto antigo (ex: lançamento do adubo)
+          // contamine a extração da nova mensagem.
+          const novosCampos = await extrairComFallback(() => extrairIntencao([], texto), celular);
 
           if (novosCampos.intent !== 'NAO_ENTENDI') {
             await session.limparContextoPendente(celular);
@@ -233,7 +263,12 @@ export async function handleMessage({ celular, texto }: { celular: string; texto
       }
     } else {
       // A mensagem atual é a resposta à pergunta que o bot fez (ex: "qual fazenda?").
-      campos = { ...camposAnteriores, [perguntando]: texto.trim() } as unknown as CamposExtraidos;
+      let valorResposta: unknown = texto.trim();
+      if ((CAMPOS_NUMERICOS as string[]).includes(perguntando)) {
+        const num = Number(texto.replace(/\./g, '').replace(',', '.').replace(/[^\d.]/g, ''));
+        if (!Number.isNaN(num)) valorResposta = num;
+      }
+      campos = { ...camposAnteriores, [perguntando]: valorResposta } as unknown as CamposExtraidos;
     }
   } else {
     const historico = await history.getRecentHistory(celular);

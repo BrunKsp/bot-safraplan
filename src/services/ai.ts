@@ -17,6 +17,10 @@ export type Intent =
   | 'CONSULTAR_RESUMO'
   | 'CONSULTAR_CONTAS_PAGAR'
   | 'CONSULTAR_PRECOS_MERCADO'
+  | 'CADASTRAR_ALERTA_PRECO'
+  | 'LISTAR_ALERTAS_PRECO'
+  | 'CANCELAR_ALERTA_PRECO'
+  | 'CADASTRAR_MAQUINA'
   | 'SAUDACAO'
   | 'AJUDA'
   | 'NAO_ENTENDI';
@@ -48,6 +52,21 @@ export interface CamposExtraidos {
   // conta é criada e já marcada como recebida na hora, em vez de ficar pendente.
   jaRecebido?: boolean;
   resposta?: string;
+  // Campos de CADASTRAR_ALERTA_PRECO
+  cultura?: string;
+  precoAlvo?: number;
+  condicaoAlerta?: 'ACIMA' | 'ABAIXO';
+  alertaSlug?: string;
+  // Campos de CADASTRAR_MAQUINA (extraídos da foto ou do texto)
+  maquinaNome?: string;
+  maquinaTipo?: 'TRATOR' | 'COLHEITADEIRA' | 'PLANTADEIRA' | 'PULVERIZADOR' | 'IMPLEMENTO' | 'VEICULO' | 'OUTRO';
+  maquinaMarca?: string;
+  maquinaModelo?: string;
+  maquinaAnoFabricacao?: number;
+  maquinaValorAquisicao?: number;
+  maquinaDataAquisicao?: string;
+  maquinaVidaUtilAnos?: number;
+  maquinaValorResidual?: number;
   // Preenchido pelo orquestrador (não pela IA) quando o produtor confirma o resumo do lançamento
   // — não faz parte do schema de tool-calling. Enquanto ausente/false, os handlers de registro
   // (despesa, conta a pagar/receber, venda) só mostram um resumo e pedem confirmação.
@@ -66,6 +85,10 @@ const INTENTS: Intent[] = [
   'CONSULTAR_RESUMO',
   'CONSULTAR_CONTAS_PAGAR',
   'CONSULTAR_PRECOS_MERCADO',
+  'CADASTRAR_ALERTA_PRECO',
+  'LISTAR_ALERTAS_PRECO',
+  'CANCELAR_ALERTA_PRECO',
+  'CADASTRAR_MAQUINA',
   'SAUDACAO',
   'AJUDA',
   'NAO_ENTENDI',
@@ -95,6 +118,19 @@ const PARAMETROS = {
     numeroParcelas: { type: 'number', description: 'Número de parcelas, só para REGISTRAR_CONTA_PAGAR/REGISTRAR_CONTA_RECEBER (ex: "em 10x", "parcelado em 3 vezes"). Se o produtor disser o valor TOTAL da compra/venda, calcule e preencha "valor" com o valor de CADA parcela (total dividido por numeroParcelas), nunca o total.' },
     jaRecebido: { type: 'boolean', description: 'Só para REGISTRAR_CONTA_RECEBER — true se o dinheiro JÁ entrou (ex: "entrada de", "recebi", "caiu na conta"), false/ausente se for uma expectativa futura ("vou receber", "o cliente vai pagar dia X").' },
     resposta: { type: 'string', description: 'Resposta curta e amigável em português para o caso de SAUDACAO, AJUDA ou NAO_ENTENDI. Ignorado nos outros intents.' },
+    cultura: { type: 'string', description: 'Cultura/commodity para alerta de preço (ex: soja, milho, trigo). Só para CADASTRAR_ALERTA_PRECO.' },
+    precoAlvo: { type: 'number', description: 'Preço-alvo em reais para o alerta. Só para CADASTRAR_ALERTA_PRECO.' },
+    condicaoAlerta: { type: 'string', enum: ['ACIMA', 'ABAIXO'], description: 'ACIMA = notifica quando preço passar do alvo para cima; ABAIXO = quando cair abaixo. Padrão ACIMA se não especificado.' },
+    alertaSlug: { type: 'string', description: 'Slug/identificador do alerta a cancelar. Deixe vazio — o sistema pergunta ao produtor.' },
+    maquinaNome: { type: 'string', description: 'Nome da máquina (ex: "John Deere 6110J", "Colheitadeira S680"). Só para CADASTRAR_MAQUINA.' },
+    maquinaTipo: { type: 'string', enum: ['TRATOR', 'COLHEITADEIRA', 'PLANTADEIRA', 'PULVERIZADOR', 'IMPLEMENTO', 'VEICULO', 'OUTRO'], description: 'Tipo da máquina. Só para CADASTRAR_MAQUINA.' },
+    maquinaMarca: { type: 'string', description: 'Marca da máquina (ex: John Deere, Case, New Holland, Valtra). Só para CADASTRAR_MAQUINA.' },
+    maquinaModelo: { type: 'string', description: 'Modelo da máquina (ex: 6110J, S680, TM7040). Só para CADASTRAR_MAQUINA.' },
+    maquinaAnoFabricacao: { type: 'number', description: 'Ano de fabricação da máquina. Só para CADASTRAR_MAQUINA.' },
+    maquinaValorAquisicao: { type: 'number', description: 'Valor de aquisição da máquina em reais. Só para CADASTRAR_MAQUINA.' },
+    maquinaDataAquisicao: { type: 'string', description: 'Data de aquisição da máquina no formato YYYY-MM-DD. Só para CADASTRAR_MAQUINA.' },
+    maquinaVidaUtilAnos: { type: 'number', description: 'Vida útil estimada da máquina em anos. Só para CADASTRAR_MAQUINA.' },
+    maquinaValorResidual: { type: 'number', description: 'Valor residual da máquina ao fim da vida útil. Só para CADASTRAR_MAQUINA.' },
   },
   required: ['intent'],
 };
@@ -131,8 +167,13 @@ Exemplos de intenção:
 - "o que tá vencendo" / "contas a pagar" -> CONSULTAR_CONTAS_PAGAR
 - "quanto tá a saca da soja" / "preço do milho hoje" -> CONSULTAR_PRECOS_MERCADO
 - "oi" / "bom dia" -> SAUDACAO (preencha "resposta" com uma saudação curta se apresentando como SafraBot)
-- pedido de ajuda / "o que você faz" -> AJUDA (preencha "resposta" explicando em 2-3 frases o que dá pra fazer: registrar despesa, conta a pagar, conta a receber, venda, e consultar resumo/preços)
+- pedido de ajuda / "o que você faz" -> AJUDA (preencha "resposta" explicando em 2-3 frases o que dá pra fazer: registrar despesa, conta a pagar, conta a receber, venda, consultar resumo/preços, cadastrar alertas de preço e máquinas)
 - mensagem incompreensível -> NAO_ENTENDI (preencha "resposta" pedindo para reformular, com um exemplo)
+- "me avisa quando soja passar de 148 reais" / "quero alerta de preço pra milho quando chegar em 65" -> CADASTRAR_ALERTA_PRECO (cultura=soja, precoAlvo=148, condicaoAlerta=ACIMA)
+- "me avisa quando soja cair abaixo de 130" -> CADASTRAR_ALERTA_PRECO (cultura=soja, precoAlvo=130, condicaoAlerta=ABAIXO)
+- "quais alertas tenho" / "meus alertas de preço" / "ver alertas" -> LISTAR_ALERTAS_PRECO
+- "cancelar alerta de soja" / "remover alerta de preço" -> CANCELAR_ALERTA_PRECO (cultura=soja se mencionada)
+- "quero cadastrar um trator" / "adicionar máquina John Deere 6110J 2018" -> CADASTRAR_MAQUINA (maquinaNome, maquinaTipo, maquinaMarca, maquinaModelo, maquinaAnoFabricacao se mencionados)
 
 Sempre que faltar informação para registrar algo (ex: valor não mencionado), ainda assim classifique a intenção corretamente e deixe os campos que faltam de fora — quem trata os campos faltando é o backend do bot, não você.`;
 }
@@ -452,14 +493,23 @@ export async function extrairIntencao(historico: MensagemHistorico[], mensagem: 
 function buildImageSystemPrompt(hoje: string): string {
   return `Você é o SafraBot, assistente de WhatsApp do SafraPlan — sistema de gestão financeira para produtores rurais.
 
-O produtor te enviou uma FOTO em vez de texto. A imagem pode ser de dois tipos bem diferentes:
-(a) um documento IMPRESSO — nota fiscal, recibo, cupom fiscal, comprovante de pagamento (PIX, boleto pago); ou
-(b) uma ANOTAÇÃO MANUSCRITA — uma página de caderno/bloco onde o produtor escreveu à mão o que gastou (ex: "Sementes 5000", "Diesel 25/09 R$ 800").
-Examine a imagem, identifique qual dos dois casos é, e extraia os campos estruturados do mesmo jeito que faria para uma mensagem de texto equivalente.
+O produtor te enviou uma FOTO em vez de texto. A imagem pode ser de três tipos:
+(a) um documento IMPRESSO — nota fiscal, recibo, cupom fiscal, comprovante de pagamento (PIX, boleto pago);
+(b) uma ANOTAÇÃO MANUSCRITA — uma página de caderno/bloco onde o produtor escreveu à mão o que gastou (ex: "Sementes 5000", "Diesel 25/09 R$ 800");
+(c) uma FOTO DE MÁQUINA AGRÍCOLA — foto de um trator, colheitadeira, plantadeira, pulverizador, veículo ou implemento (com ou sem placa/etiqueta visível).
+Examine a imagem, identifique qual dos três casos é, e extraia os campos estruturados.
 
 A data de hoje é ${hoje} (formato YYYY-MM-DD). Se a imagem tiver uma data visível, use-a; senão use a data de hoje.
 
-Na grande maioria dos casos a intenção correta é REGISTRAR_DESPESA (valor total, descrição do que foi comprado, categoria — ex: combustível, insumos, manutenção — e forma de pagamento se visível no comprovante).
+CASO (c) — FOTO DE MÁQUINA: use intent CADASTRAR_MAQUINA e preencha SOMENTE os campos que conseguir extrair visualmente da imagem:
+- maquinaMarca: marca visível (ex: John Deere, Case, New Holland, Valtra, Massey Ferguson)
+- maquinaModelo: modelo visível (ex: 6110J, S680, TM7040) — leia a plaqueta, lateral ou frente da máquina
+- maquinaAnoFabricacao: ano visível na plaqueta ou documentação fotografada
+- maquinaTipo: infira pelo visual — TRATOR (cabine + rodas grandes), COLHEITADEIRA (plataforma de corte), PLANTADEIRA (discos de plantio), PULVERIZADOR (tanque + barra de pulverização), IMPLEMENTO (arado, grade, etc.), VEICULO (caminhão, utilitário), OUTRO
+- maquinaNome: combine marca + modelo se visíveis (ex: "John Deere 6110J"), senão descreva o que vê (ex: "Trator verde grande")
+NÃO tente extrair valorAquisicao, dataAquisicao ou vidaUtilAnos de uma foto — essas informações raramente estão visíveis e o sistema vai perguntar ao produtor.
+
+Na grande maioria dos demais casos a intenção correta é REGISTRAR_DESPESA (valor total, descrição do que foi comprado, categoria — ex: combustível, insumos, manutenção — e forma de pagamento se visível no comprovante).
 
 IMPORTANTE sobre o campo "valor" — a regra muda conforme o tipo de imagem:
 - Se for um documento IMPRESSO (nota fiscal/cupom/comprovante): use SEMPRE o valor total IMPRESSO (linha "VALOR TOTAL", "TOTAL A PAGAR" ou equivalente). Rabiscos, números circulados ou anotações à mão feitas NAS BORDAS/VERSO desse documento impresso NÃO são o valor da despesa — ignore-os, mesmo que pareçam mais em destaque que o total impresso (produtor às vezes anota outra coisa ali, tipo hodômetro ou número de nota).
