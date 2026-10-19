@@ -399,6 +399,141 @@ async function consultarPrecosMercado(sessao: SessaoWhatsapp, campos: CamposExtr
   return { resposta: `Últimas cotações (${fazenda!.nome}):\n${linhas.join('\n')}` };
 }
 
+async function cadastrarAlertaPreco(sessao: SessaoWhatsapp, campos: CamposExtraidos): Promise<ResultadoIntencao> {
+  if (!campos.cultura) return { perguntar: 'cultura', pergunta: 'Qual cultura você quer monitorar? (ex: soja, milho, trigo)' };
+  if (!campos.precoAlvo) return { perguntar: 'precoAlvo', pergunta: `Qual o preço-alvo para ${campos.cultura}? (ex: 148)` };
+
+  const { fazenda, perguntar, pergunta, resposta } = await resolverFazendaOuPerguntar(sessao, campos);
+  if (resposta) return { resposta };
+  if (perguntar) return { perguntar, pergunta };
+
+  const condicao = campos.condicaoAlerta ?? 'ACIMA';
+
+  if (!campos.confirmado) {
+    return pedirConfirmacao([
+      ['Cultura', campos.cultura.toUpperCase()],
+      ['Preço-alvo', moeda(campos.precoAlvo)],
+      ['Condição', condicao === 'ACIMA' ? 'Notificar quando passar acima' : 'Notificar quando cair abaixo'],
+      ['Fazenda', fazenda!.nome],
+    ]);
+  }
+
+  await backendClient.criarAlertaPreco(sessao.token, {
+    fazendaSlug: fazenda!.slug,
+    cultura: campos.cultura,
+    precoAlvo: campos.precoAlvo,
+    condicao,
+  });
+
+  const direcao = condicao === 'ACIMA' ? 'superar' : 'cair abaixo de';
+  return { resposta: `Alerta criado! Vou te avisar quando o preço de ${campos.cultura.toUpperCase()} ${direcao} ${moeda(campos.precoAlvo)}.` };
+}
+
+async function listarAlertasPreco(sessao: SessaoWhatsapp): Promise<ResultadoIntencao> {
+  const alertas = await backendClient.listarAlertasPreco(sessao.token);
+
+  if (alertas.length === 0) {
+    return { resposta: 'Você não tem nenhum alerta de preço configurado. Me diz uma cultura e o preço-alvo que eu crio pra você!' };
+  }
+
+  const linhas = alertas.map((a: any) => {
+    const direcao = a.condicao === 'ACIMA' ? '↑ acima de' : '↓ abaixo de';
+    const cotacao = a.cotacaoAtual ? ` | cotação atual: ${moeda(a.cotacaoAtual.preco)}` : '';
+    const status = a.disparado ? ' ✅ disparado' : '';
+    return `• ${a.cultura} ${direcao} ${moeda(a.precoAlvo)} (${a.fazenda.nome})${cotacao}${status}`;
+  });
+
+  return { resposta: `Seus alertas de preço:\n${linhas.join('\n')}` };
+}
+
+async function cancelarAlertaPreco(sessao: SessaoWhatsapp, campos: CamposExtraidos): Promise<ResultadoIntencao> {
+  const alertas = await backendClient.listarAlertasPreco(sessao.token);
+
+  if (alertas.length === 0) {
+    return { resposta: 'Você não tem alertas de preço para cancelar.' };
+  }
+
+  // Se mencionou cultura, filtra; senão lista todos para o usuário escolher
+  const candidatos = campos.cultura
+    ? alertas.filter((a: any) => normalizar(a.cultura).includes(normalizar(campos.cultura!)))
+    : alertas;
+
+  if (candidatos.length === 0) {
+    const nomes = alertas.map((a: any) => `${a.cultura} (${a.fazenda.nome})`).join(', ');
+    return { resposta: `Não encontrei alerta para "${campos.cultura}". Seus alertas: ${nomes}.` };
+  }
+
+  if (candidatos.length > 1 && !campos.alertaSlug) {
+    const opcoes = candidatos.map((a: any, i: number) => `${i + 1}. ${a.cultura} — ${moeda(a.precoAlvo)} (${a.fazenda.nome})`).join('\n');
+    return { perguntar: 'alertaSlug', pergunta: `Qual alerta você quer cancelar?\n${opcoes}\n\nResponda com o número.` };
+  }
+
+  let alvo = candidatos[0];
+  if (campos.alertaSlug) {
+    const idx = parseInt(campos.alertaSlug, 10);
+    if (!isNaN(idx) && idx >= 1 && idx <= candidatos.length) {
+      alvo = candidatos[idx - 1];
+    } else {
+      alvo = candidatos.find((a: any) => a.slug === campos.alertaSlug) ?? candidatos[0];
+    }
+  }
+
+  await backendClient.deletarAlertaPreco(sessao.token, alvo.slug);
+  return { resposta: `Alerta de ${alvo.cultura} (${moeda(alvo.precoAlvo)}) cancelado.` };
+}
+
+const TIPOS_MAQUINA: Record<string, string> = {
+  TRATOR: 'Trator',
+  COLHEITADEIRA: 'Colheitadeira',
+  PLANTADEIRA: 'Plantadeira',
+  PULVERIZADOR: 'Pulverizador',
+  IMPLEMENTO: 'Implemento',
+  VEICULO: 'Veículo',
+  OUTRO: 'Outro',
+};
+
+async function cadastrarMaquina(sessao: SessaoWhatsapp, campos: CamposExtraidos): Promise<ResultadoIntencao> {
+  if (!campos.maquinaNome) return { perguntar: 'maquinaNome', pergunta: 'Qual o nome ou descrição da máquina? (ex: John Deere 6110J, Colheitadeira S680)' };
+  if (!campos.maquinaTipo) return { perguntar: 'maquinaTipo', pergunta: 'Qual o tipo? Responda: TRATOR, COLHEITADEIRA, PLANTADEIRA, PULVERIZADOR, IMPLEMENTO, VEICULO ou OUTRO' };
+  if (!campos.maquinaValorAquisicao) return { perguntar: 'maquinaValorAquisicao', pergunta: 'Qual foi o valor de aquisição da máquina? (em reais)' };
+  if (!campos.maquinaDataAquisicao) return { perguntar: 'maquinaDataAquisicao', pergunta: 'Em que data foi adquirida? (ex: 2023-01-15)' };
+  if (!campos.maquinaVidaUtilAnos) return { perguntar: 'maquinaVidaUtilAnos', pergunta: 'Qual a vida útil estimada em anos? (ex: 10)' };
+
+  const { fazenda, perguntar, pergunta, resposta } = await resolverFazendaOuPerguntar(sessao, campos);
+  if (resposta) return { resposta };
+  if (perguntar) return { perguntar, pergunta };
+
+  if (!campos.confirmado) {
+    return pedirConfirmacao([
+      ['Nome', campos.maquinaNome],
+      ['Tipo', TIPOS_MAQUINA[campos.maquinaTipo] ?? campos.maquinaTipo],
+      ['Marca', campos.maquinaMarca],
+      ['Modelo', campos.maquinaModelo],
+      ['Ano de fabricação', campos.maquinaAnoFabricacao?.toString()],
+      ['Valor de aquisição', moeda(campos.maquinaValorAquisicao)],
+      ['Data de aquisição', campos.maquinaDataAquisicao],
+      ['Vida útil', `${campos.maquinaVidaUtilAnos} anos`],
+      ['Valor residual', campos.maquinaValorResidual ? moeda(campos.maquinaValorResidual) : undefined],
+      ['Fazenda', fazenda!.nome],
+    ]);
+  }
+
+  await backendClient.criarMaquina(sessao.token, {
+    fazendaSlug: fazenda!.slug,
+    nome: campos.maquinaNome,
+    tipo: campos.maquinaTipo,
+    marca: campos.maquinaMarca,
+    modelo: campos.maquinaModelo,
+    anoFabricacao: campos.maquinaAnoFabricacao,
+    valorAquisicao: campos.maquinaValorAquisicao,
+    dataAquisicao: campos.maquinaDataAquisicao,
+    vidaUtilAnos: campos.maquinaVidaUtilAnos,
+    valorResidual: campos.maquinaValorResidual ?? 0,
+  });
+
+  return { resposta: `Máquina *${campos.maquinaNome}* cadastrada com sucesso! 🚜\nVida útil de ${campos.maquinaVidaUtilAnos} anos a partir de ${campos.maquinaDataAquisicao}.` };
+}
+
 const HANDLERS: Record<string, (sessao: SessaoWhatsapp, campos: CamposExtraidos) => Promise<ResultadoIntencao>> = {
   REGISTRAR_DESPESA: registrarDespesa,
   REGISTRAR_CONTA_PAGAR: registrarContaPagar,
@@ -408,6 +543,10 @@ const HANDLERS: Record<string, (sessao: SessaoWhatsapp, campos: CamposExtraidos)
   CONSULTAR_RESUMO: consultarResumo,
   CONSULTAR_CONTAS_PAGAR: consultarContasPagar,
   CONSULTAR_PRECOS_MERCADO: consultarPrecosMercado,
+  CADASTRAR_ALERTA_PRECO: cadastrarAlertaPreco,
+  LISTAR_ALERTAS_PRECO: listarAlertasPreco,
+  CANCELAR_ALERTA_PRECO: cancelarAlertaPreco,
+  CADASTRAR_MAQUINA: cadastrarMaquina,
   SAUDACAO: saudacao,
 };
 

@@ -143,3 +143,22 @@ export async function getPrecosMercado(token: string, fazendaSlug: string): Prom
   const { data } = await api.get(`/fazendas/${fazendaSlug}/precos-mercado`, comToken(token));
   return data;
 }
+
+export async function criarAlertaPreco(token: string, payload: Record<string, unknown>): Promise<any> {
+  const { data } = await api.post('/alertas-preco', payload, comToken(token));
+  return data;
+}
+
+export async function listarAlertasPreco(token: string): Promise<any[]> {
+  const { data } = await api.get('/alertas-preco', comToken(token));
+  return data;
+}
+
+export async function deletarAlertaPreco(token: string, slug: string): Promise<void> {
+  await api.delete(`/alertas-preco/${slug}`, comToken(token));
+}
+
+export async function criarMaquina(token: string, payload: Record<string, unknown>): Promise<any> {
+  const { data } = await api.post('/maquinas', payload, comToken(token));
+  return data;
+}
