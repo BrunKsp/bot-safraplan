@@ -7,7 +7,10 @@ import * as storage from './storage';
 import * as numerosNaoCadastrados from './numerosNaoCadastrados';
 import { extrairIntencao, classificarImagem, CamposExtraidos, FormaPagamento } from './ai';
 import { tratarIntencao } from '../intents/handlers';
+import { consultarWhatsapp } from './backendClient';
 import { SessaoWhatsapp } from '../database/entities/SessaoWhatsapp';
+
+const COMANDOS_CONSULTA = /^(saldo|resumo|gastos|despesas|safras?|lavoura|ajuda|help|\?)(\s|$)/i;
 
 const FALHA_IA: CamposExtraidos = {
   intent: 'NAO_ENTENDI',
@@ -197,6 +200,16 @@ export async function handleMessage({ celular, texto }: { celular: string; texto
   }
 
   await history.salvarMensagem(celular, 'user', texto);
+
+  // Comandos de consulta rápida (saldo, gastos, safras, ajuda) não passam pela IA —
+  // o backend processa e responde direto sem precisar de extração de intenção.
+  if (COMANDOS_CONSULTA.test(texto.trim()) && !sessao.contextoPendente) {
+    const resposta = await consultarWhatsapp(celular, texto.trim());
+    if (resposta) {
+      await history.salvarMensagem(celular, 'assistant', resposta);
+      return resposta;
+    }
+  }
 
   let campos: CamposExtraidos;
 

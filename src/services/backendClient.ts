@@ -162,3 +162,18 @@ export async function criarMaquina(token: string, payload: Record<string, unknow
   const { data } = await api.post('/maquinas', payload, comToken(token));
   return data;
 }
+
+// Consulta de saldo/gastos/safras pelo WhatsApp — processada pelo backend via x-integration-secret.
+export async function consultarWhatsapp(celular: string, mensagem: string): Promise<string | null> {
+  try {
+    const { data } = await api.post<{ resposta: string }>(
+      '/bot/whatsapp/mensagem',
+      { celular, mensagem },
+      { headers: { 'x-integration-secret': process.env.WHATSAPP_BOT_SECRET } },
+    );
+    return data.resposta ?? null;
+  } catch (err: any) {
+    console.error('Erro ao consultar backend (whatsapp consulta):', err.response?.data || err.message);
+    return null;
+  }
+}
