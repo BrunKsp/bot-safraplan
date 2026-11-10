@@ -163,6 +163,31 @@ export async function criarMaquina(token: string, payload: Record<string, unknow
   return data;
 }
 
+export async function listarMaquinas(token: string): Promise<any[]> {
+  const { data } = await api.get('/maquinas', comToken(token));
+  return Array.isArray(data) ? data : data.dados ?? [];
+}
+
+export async function registrarManutencaoMaquina(token: string, maquinaSlug: string, payload: Record<string, unknown>): Promise<any> {
+  const { data } = await api.post(`/maquinas/${maquinaSlug}/manutencoes`, payload, comToken(token));
+  return data;
+}
+
+export async function listarArrendamentos(token: string): Promise<any[]> {
+  const { data } = await api.get('/arrendamentos', comToken(token));
+  return Array.isArray(data) ? data : data.dados ?? [];
+}
+
+export async function criarArrendamento(token: string, payload: Record<string, unknown>): Promise<any> {
+  const { data } = await api.post('/arrendamentos', payload, comToken(token));
+  return data;
+}
+
+export async function criarSafra(token: string, fazendaSlug: string, payload: Record<string, unknown>): Promise<any> {
+  const { data } = await api.post(`/fazendas/${fazendaSlug}/safras`, payload, comToken(token));
+  return data;
+}
+
 // Consulta de saldo/gastos/safras pelo WhatsApp — processada pelo backend via x-integration-secret.
 export async function consultarWhatsapp(celular: string, mensagem: string): Promise<string | null> {
   try {

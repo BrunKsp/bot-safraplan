@@ -21,6 +21,9 @@ export type Intent =
   | 'LISTAR_ALERTAS_PRECO'
   | 'CANCELAR_ALERTA_PRECO'
   | 'CADASTRAR_MAQUINA'
+  | 'REGISTRAR_MANUTENCAO_MAQUINA'
+  | 'CADASTRAR_ARRENDAMENTO'
+  | 'CADASTRAR_SAFRA'
   | 'SAUDACAO'
   | 'AJUDA'
   | 'NAO_ENTENDI';
@@ -67,6 +70,20 @@ export interface CamposExtraidos {
   maquinaDataAquisicao?: string;
   maquinaVidaUtilAnos?: number;
   maquinaValorResidual?: number;
+  // Campos de REGISTRAR_MANUTENCAO_MAQUINA
+  maquinaIdentificacao?: string;
+  manutencaoTipo?: string;
+  manutencaoKm?: number;
+  // Campos de CADASTRAR_ARRENDAMENTO
+  arrendamentoAreaHa?: number;
+  arrendamentoValorPorHectare?: number;
+  arrendamentoUnidade?: 'REAIS' | 'SACAS';
+  arrendamentoLocador?: string;
+  arrendamentoTipo?: 'ARRENDATARIO' | 'ARRENDADOR';
+  // Campos de CADASTRAR_SAFRA
+  safraCultura?: string;
+  safraAreaHa?: number;
+  safraAno?: string;
   // Preenchido pelo orquestrador (não pela IA) quando o produtor confirma o resumo do lançamento
   // — não faz parte do schema de tool-calling. Enquanto ausente/false, os handlers de registro
   // (despesa, conta a pagar/receber, venda) só mostram um resumo e pedem confirmação.
@@ -89,6 +106,9 @@ const INTENTS: Intent[] = [
   'LISTAR_ALERTAS_PRECO',
   'CANCELAR_ALERTA_PRECO',
   'CADASTRAR_MAQUINA',
+  'REGISTRAR_MANUTENCAO_MAQUINA',
+  'CADASTRAR_ARRENDAMENTO',
+  'CADASTRAR_SAFRA',
   'SAUDACAO',
   'AJUDA',
   'NAO_ENTENDI',
@@ -131,6 +151,17 @@ const PARAMETROS = {
     maquinaDataAquisicao: { type: 'string', description: 'Data de aquisição da máquina no formato YYYY-MM-DD. Só para CADASTRAR_MAQUINA.' },
     maquinaVidaUtilAnos: { type: 'number', description: 'Vida útil estimada da máquina em anos. Só para CADASTRAR_MAQUINA.' },
     maquinaValorResidual: { type: 'number', description: 'Valor residual da máquina ao fim da vida útil. Só para CADASTRAR_MAQUINA.' },
+    maquinaIdentificacao: { type: 'string', description: 'Nome ou descrição da máquina que recebeu a manutenção (texto livre, ex: "trator", "John Deere"). Só para REGISTRAR_MANUTENCAO_MAQUINA.' },
+    manutencaoTipo: { type: 'string', description: 'Tipo/descrição da manutenção realizada (ex: troca de óleo, revisão, reparo de motor). Só para REGISTRAR_MANUTENCAO_MAQUINA.' },
+    manutencaoKm: { type: 'number', description: 'Hodômetro ou horas da máquina no momento da manutenção. Só para REGISTRAR_MANUTENCAO_MAQUINA.' },
+    arrendamentoAreaHa: { type: 'number', description: 'Área total do arrendamento em hectares. Só para CADASTRAR_ARRENDAMENTO.' },
+    arrendamentoValorPorHectare: { type: 'number', description: 'Valor por hectare (em reais ou sacas). Só para CADASTRAR_ARRENDAMENTO.' },
+    arrendamentoUnidade: { type: 'string', enum: ['REAIS', 'SACAS'], description: 'Unidade do valor de arrendamento. SACAS quando mencionar sacas de soja/milho, REAIS quando for em dinheiro. Só para CADASTRAR_ARRENDAMENTO.' },
+    arrendamentoLocador: { type: 'string', description: 'Nome do proprietário/locador da terra. Só para CADASTRAR_ARRENDAMENTO.' },
+    arrendamentoTipo: { type: 'string', enum: ['ARRENDATARIO', 'ARRENDADOR'], description: 'ARRENDATARIO = você paga (arrenda de alguém); ARRENDADOR = você recebe (sua terra arrendada para alguém). Padrão ARRENDATARIO se não especificado.' },
+    safraCultura: { type: 'string', description: 'Cultura ou atividade da safra em texto livre (ex: soja, milho, boi gordo, cordeiro). Só para CADASTRAR_SAFRA.' },
+    safraAreaHa: { type: 'number', description: 'Área plantada/utilizada em hectares. Só para CADASTRAR_SAFRA.' },
+    safraAno: { type: 'string', description: 'Ano safra (ex: "2025", "2024/2025"). Se não mencionado, use o ano atual.' },
   },
   required: ['intent'],
 };
@@ -167,13 +198,19 @@ Exemplos de intenção:
 - "o que tá vencendo" / "contas a pagar" -> CONSULTAR_CONTAS_PAGAR
 - "quanto tá a saca da soja" / "preço do milho hoje" -> CONSULTAR_PRECOS_MERCADO
 - "oi" / "bom dia" -> SAUDACAO (preencha "resposta" com uma saudação curta se apresentando como SafraBot)
-- pedido de ajuda / "o que você faz" -> AJUDA (preencha "resposta" explicando em 2-3 frases o que dá pra fazer: registrar despesa, conta a pagar, conta a receber, venda, consultar resumo/preços, cadastrar alertas de preço e máquinas)
+- pedido de ajuda / "o que você faz" -> AJUDA (preencha "resposta" explicando em 2-3 frases o que dá pra fazer: registrar despesa/manutenção de máquina, conta a pagar, conta a receber, venda, consultar resumo/preços/safras/saldo, cadastrar alertas de preço, máquinas, arrendamento e safra/atividade pecuária)
 - mensagem incompreensível -> NAO_ENTENDI (preencha "resposta" pedindo para reformular, com um exemplo)
 - "me avisa quando soja passar de 148 reais" / "quero alerta de preço pra milho quando chegar em 65" -> CADASTRAR_ALERTA_PRECO (cultura=soja, precoAlvo=148, condicaoAlerta=ACIMA)
 - "me avisa quando soja cair abaixo de 130" -> CADASTRAR_ALERTA_PRECO (cultura=soja, precoAlvo=130, condicaoAlerta=ABAIXO)
 - "quais alertas tenho" / "meus alertas de preço" / "ver alertas" -> LISTAR_ALERTAS_PRECO
 - "cancelar alerta de soja" / "remover alerta de preço" -> CANCELAR_ALERTA_PRECO (cultura=soja se mencionada)
 - "quero cadastrar um trator" / "adicionar máquina John Deere 6110J 2018" -> CADASTRAR_MAQUINA (maquinaNome, maquinaTipo, maquinaMarca, maquinaModelo, maquinaAnoFabricacao se mencionados)
+- "fiz revisão no trator, custou R$800" / "troca de óleo no John Deere" -> REGISTRAR_MANUTENCAO_MAQUINA (valor=800, manutencaoTipo="Revisão", maquinaIdentificacao="trator"). IMPORTANTE: manutenção de máquina tem intent próprio, não use REGISTRAR_DESPESA quando o produtor mencionar manutenção/revisão/troca de óleo em equipamento específico.
+- "tenho 50 hectares arrendados por R$300/ha" -> CADASTRAR_ARRENDAMENTO (arrendamentoAreaHa=50, arrendamentoValorPorHectare=300, arrendamentoUnidade=REAIS, arrendamentoTipo=ARRENDATARIO)
+- "arrendo 80 ha a 12 sacas de soja" -> CADASTRAR_ARRENDAMENTO (arrendamentoAreaHa=80, arrendamentoValorPorHectare=12, arrendamentoUnidade=SACAS, arrendamentoTipo=ARRENDATARIO)
+- "tenho terra arrendada para um vizinho, 40 ha a R$200/ha" -> CADASTRAR_ARRENDAMENTO (arrendamentoAreaHa=40, arrendamentoValorPorHectare=200, arrendamentoUnidade=REAIS, arrendamentoTipo=ARRENDADOR)
+- "plantei 60 ha de soja" / "quero registrar safra de soja" -> CADASTRAR_SAFRA (safraCultura="soja", safraAreaHa=60)
+- "tenho 30 hectares de gado" / "atividade de pecuária com 50 ha" -> CADASTRAR_SAFRA (safraCultura="BOI_GORDO", safraAreaHa=30)
 
 Sempre que faltar informação para registrar algo (ex: valor não mencionado), ainda assim classifique a intenção corretamente e deixe os campos que faltam de fora — quem trata os campos faltando é o backend do bot, não você.`;
 }
