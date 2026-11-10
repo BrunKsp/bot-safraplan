@@ -121,7 +121,30 @@ async function registrarDespesa(sessao: SessaoWhatsapp, campos: CamposExtraidos)
   });
 
   const respostaDespesa = `Despesa registrada: ${moeda(despesa.valor)} em ${categoria.nome} na fazenda ${fazenda!.nome}. ✅`;
-  if (!parcelado) return { resposta: respostaDespesa };
+
+  // Sugestões contextuais pós-registro
+  let sugestao = '';
+  const catNorm = normalizar(categoria.nome);
+  if (catNorm.includes('manutencao') || catNorm.includes('reparo') || catNorm.includes('oficina')) {
+    const maquinas = await backendClient.listarMaquinas(sessao.token).catch(() => []);
+    if (maquinas.length > 0) {
+      sugestao = '\n\n💡 Quer vincular essa manutenção a uma máquina? Me diga *registrar manutenção* com o nome dela.';
+    } else {
+      sugestao = '\n\n💡 Você tem máquinas? Me diga *cadastrar máquina* e controlo a depreciação pra você.';
+    }
+  } else if (catNorm.includes('combustivel') || catNorm.includes('diesel') || catNorm.includes('gasolina')) {
+    const maquinas = await backendClient.listarMaquinas(sessao.token).catch(() => []);
+    if (maquinas.length === 0) {
+      sugestao = '\n\n💡 Quer cadastrar suas máquinas? Assim consigo calcular o custo de combustível por equipamento.';
+    }
+  } else if (catNorm.includes('arrendamento') || catNorm.includes('aluguel') || catNorm.includes('arrendamento')) {
+    const arrendamentos = await backendClient.listarArrendamentos(sessao.token).catch(() => []);
+    if (arrendamentos.length === 0) {
+      sugestao = '\n\n💡 Quer cadastrar esse arrendamento? Assim o sistema controla as parcelas automaticamente. Me diga *cadastrar arrendamento*.';
+    }
+  }
+
+  if (!parcelado) return { resposta: respostaDespesa + sugestao };
 
   const conta = await backendClient.criarContaPagar(sessao.token, {
     fazendaSlug: fazenda!.slug,
@@ -135,7 +158,7 @@ async function registrarDespesa(sessao: SessaoWhatsapp, campos: CamposExtraidos)
 
   const ultima = conta.proximasParcelas?.[conta.proximasParcelas.length - 1];
   return {
-    resposta: `${respostaDespesa}\nParcelas geradas como conta a pagar: ${conta.totalParcelas}x de ${moeda(conta.valor)}, 1ª em ${conta.dataVencimento}${ultima ? `, última em ${ultima.dataVencimento}` : ''}.`,
+    resposta: `${respostaDespesa}\nParcelas geradas como conta a pagar: ${conta.totalParcelas}x de ${moeda(conta.valor)}, 1ª em ${conta.dataVencimento}${ultima ? `, última em ${ultima.dataVencimento}` : ''}.${sugestao}`,
   };
 }
 
@@ -172,14 +195,24 @@ async function registrarContaPagar(sessao: SessaoWhatsapp, campos: CamposExtraid
     numeroParcelas: campos.numeroParcelas,
   });
 
+  // Sugestão: se parecer arrendamento, sugere cadastrar formalmente
+  let sugestaoArrendamento = '';
+  const descNorm = normalizar(campos.descricao);
+  if (descNorm.includes('arrendamento') || descNorm.includes('aluguel terra') || descNorm.includes('arrendamento')) {
+    const arrendamentos = await backendClient.listarArrendamentos(sessao.token).catch(() => []);
+    if (arrendamentos.length === 0) {
+      sugestaoArrendamento = '\n\n💡 Quer cadastrar esse arrendamento formalmente? Assim o sistema gera as parcelas automaticamente. Me diga *cadastrar arrendamento*.';
+    }
+  }
+
   if (conta.totalParcelas > 1) {
     const ultima = conta.proximasParcelas?.[conta.proximasParcelas.length - 1];
     return {
-      resposta: `Conta a pagar parcelada registrada: ${conta.totalParcelas}x de ${moeda(conta.valor)} (total ${moeda(conta.valor * conta.totalParcelas)}), 1ª parcela em ${conta.dataVencimento}${ultima ? `, última em ${ultima.dataVencimento}` : ''}. ✅`,
+      resposta: `Conta a pagar parcelada registrada: ${conta.totalParcelas}x de ${moeda(conta.valor)} (total ${moeda(conta.valor * conta.totalParcelas)}), 1ª parcela em ${conta.dataVencimento}${ultima ? `, última em ${ultima.dataVencimento}` : ''}. ✅${sugestaoArrendamento}`,
     };
   }
 
-  return { resposta: `Conta a pagar registrada: ${moeda(conta.valor)}, vencimento em ${conta.dataVencimento}. ✅` };
+  return { resposta: `Conta a pagar registrada: ${moeda(conta.valor)}, vencimento em ${conta.dataVencimento}. ✅${sugestaoArrendamento}` };
 }
 
 async function registrarContaReceber(sessao: SessaoWhatsapp, campos: CamposExtraidos): Promise<ResultadoIntencao> {
@@ -280,8 +313,18 @@ async function registrarVenda(sessao: SessaoWhatsapp, campos: CamposExtraidos): 
     gerarContaReceber: Boolean(campos.gerarContaReceber),
   });
 
+  // Sugestão pós-venda: se produto pecuário e não tem safra, sugere criar
+  let sugestaoSafra = '';
+  const prodNorm = normalizar(produtoResolvido.produto!.nome);
+  if (prodNorm.includes('boi') || prodNorm.includes('gado') || prodNorm.includes('cordeiro') || prodNorm.includes('suino') || prodNorm.includes('bufalo')) {
+    const safras = await backendClient.listarSafras(sessao.token, fazenda!.slug).catch(() => []);
+    if (safras.length === 0) {
+      sugestaoSafra = '\n\n💡 Quer registrar a área de pecuária como uma atividade? Assim calculo a rentabilidade por hectare. Me diga *cadastrar safra* com a cultura e a área.';
+    }
+  }
+
   return {
-    resposta: `Venda registrada: ${campos.quantidade} ${venda.unidadeMedida} de ${produtoResolvido.produto!.nome} a ${moeda(campos.valor)} = ${moeda(venda.valorTotal)}. ✅`,
+    resposta: `Venda registrada: ${campos.quantidade} ${venda.unidadeMedida} de ${produtoResolvido.produto!.nome} a ${moeda(campos.valor)} = ${moeda(venda.valorTotal)}. ✅${sugestaoSafra}`,
   };
 }
 
@@ -534,6 +577,159 @@ async function cadastrarMaquina(sessao: SessaoWhatsapp, campos: CamposExtraidos)
   return { resposta: `Máquina *${campos.maquinaNome}* cadastrada com sucesso! 🚜\nVida útil de ${campos.maquinaVidaUtilAnos} anos a partir de ${campos.maquinaDataAquisicao}.` };
 }
 
+async function registrarManutencaoMaquina(sessao: SessaoWhatsapp, campos: CamposExtraidos): Promise<ResultadoIntencao> {
+  if (!campos.manutencaoTipo && !campos.descricao) return { perguntar: 'manutencaoTipo', pergunta: 'Que tipo de manutenção foi feita? (ex: troca de óleo, revisão, reparo de motor)' };
+  if (!campos.valor) return { resposta: 'Qual foi o custo da manutenção?' };
+
+  const { fazenda, perguntar, pergunta, resposta } = await resolverFazendaOuPerguntar(sessao, campos);
+  if (resposta) return { resposta };
+  if (perguntar) return { perguntar, pergunta };
+
+  const maquinas = await backendClient.listarMaquinas(sessao.token);
+  const maquinasFazenda = maquinas.filter((m: any) => !m.fazenda || m.fazenda.slug === fazenda!.slug);
+
+  let maquina: any = null;
+  if (campos.maquinaIdentificacao && maquinasFazenda.length > 0) {
+    const termo = normalizar(campos.maquinaIdentificacao);
+    maquina = maquinasFazenda.find((m: any) =>
+      normalizar(m.nome).includes(termo) || normalizar(m.tipo).includes(termo) ||
+      (m.marca && normalizar(m.marca).includes(termo)) || (m.modelo && normalizar(m.modelo).includes(termo))
+    );
+  }
+  if (!maquina && maquinasFazenda.length === 1) maquina = maquinasFazenda[0];
+  if (!maquina && maquinasFazenda.length > 1) {
+    const opcoes = maquinasFazenda.slice(0, 5).map((m: any, i: number) => `${i + 1}. ${m.nome} (${m.tipo})`).join('\n');
+    return { perguntar: 'maquinaIdentificacao', pergunta: `Qual máquina recebeu a manutenção?\n${opcoes}\n\nResponda com o número ou o nome.` };
+  }
+  if (!maquina) {
+    return { resposta: 'Nenhuma máquina cadastrada nessa fazenda. Quer cadastrar uma primeiro? Me diga *cadastrar máquina* com o nome e tipo.' };
+  }
+
+  campos.data = campos.data || hojeISO();
+  const tipoManutencao = campos.manutencaoTipo || campos.descricao || 'Manutenção';
+
+  if (!campos.confirmado) {
+    return pedirConfirmacao([
+      ['Máquina', maquina.nome],
+      ['Tipo', tipoManutencao],
+      ['Custo', moeda(campos.valor)],
+      ['Data', campos.data],
+      ['Fazenda', fazenda!.nome],
+    ]);
+  }
+
+  const categoriaManutencao = await resolverCategoria(sessao.token, 'manutenção');
+
+  await backendClient.criarDespesa(sessao.token, {
+    fazendaSlug: fazenda!.slug,
+    categoriaSlug: categoriaManutencao.slug,
+    descricao: `${tipoManutencao} — ${maquina.nome}`,
+    valor: campos.valor,
+    data: campos.data,
+    formaPagamento: campos.formaPagamento || 'OUTRO',
+  });
+
+  await backendClient.registrarManutencaoMaquina(sessao.token, maquina.slug, {
+    tipo: 'CORRETIVA',
+    descricao: tipoManutencao,
+    valor: campos.valor,
+    data: campos.data,
+    horimetro: campos.manutencaoKm,
+  });
+
+  return { resposta: `Manutenção registrada: *${tipoManutencao}* no ${maquina.nome} — ${moeda(campos.valor!)}. ✅\nDespesa lançada automaticamente.` };
+}
+
+async function cadastrarArrendamento(sessao: SessaoWhatsapp, campos: CamposExtraidos): Promise<ResultadoIntencao> {
+  if (!campos.arrendamentoAreaHa) return { perguntar: 'arrendamentoAreaHa', pergunta: 'Quantos hectares são arrendados?' };
+  if (!campos.arrendamentoValorPorHectare && !campos.arrendamentoUnidade) return { perguntar: 'arrendamentoValorPorHectare', pergunta: 'Qual o valor por hectare? (ex: R$300/ha ou 12 sacas de soja)' };
+
+  const { fazenda, perguntar, pergunta, resposta } = await resolverFazendaOuPerguntar(sessao, campos);
+  if (resposta) return { resposta };
+  if (perguntar) return { perguntar, pergunta };
+
+  const unidade = campos.arrendamentoUnidade ?? 'REAIS';
+  const tipo = campos.arrendamentoTipo ?? 'ARRENDATARIO';
+  const valorPorHa = campos.arrendamentoValorPorHectare ?? 0;
+
+  if (!campos.confirmado) {
+    return pedirConfirmacao([
+      ['Tipo', tipo === 'ARRENDATARIO' ? 'Você paga (arrendatário)' : 'Você recebe (arrendador)'],
+      ['Área', `${campos.arrendamentoAreaHa} ha`],
+      ['Valor/ha', unidade === 'SACAS' ? `${valorPorHa} sacas` : moeda(valorPorHa)],
+      ['Contraparte', campos.arrendamentoLocador],
+      ['Fazenda', fazenda!.nome],
+    ]);
+  }
+
+  const hoje = hojeISO();
+  const dataFim = `${Number(hoje.slice(0, 4)) + 1}${hoje.slice(4)}`; // 1 ano padrão
+
+  const payload: Record<string, unknown> = {
+    fazendaSlug: fazenda!.slug,
+    tipo,
+    contraparte: campos.arrendamentoLocador ?? 'Não informado',
+    areaHa: campos.arrendamentoAreaHa,
+    modalidade: unidade,
+    dataInicio: hoje,
+    dataFim,
+    diaVencimento: 10,
+    mesVencimento: 1,
+  };
+  if (unidade === 'SACAS') {
+    payload.sacasPorHa = valorPorHa;
+    payload.culturaReferencia = 'SOJA';
+  } else {
+    payload.valorFixoAnual = valorPorHa * campos.arrendamentoAreaHa!;
+  }
+
+  await backendClient.criarArrendamento(sessao.token, payload);
+
+  const valorStr = unidade === 'SACAS' ? `${valorPorHa} sacas/ha` : `${moeda(valorPorHa)}/ha`;
+  return {
+    resposta: `Arrendamento cadastrado: ${campos.arrendamentoAreaHa} ha na ${fazenda!.nome} a ${valorStr} (${tipo === 'ARRENDATARIO' ? 'você paga' : 'você recebe'}). ✅\nAcesse o app pra ajustar datas e vencimentos se precisar.`,
+  };
+}
+
+async function cadastrarSafra(sessao: SessaoWhatsapp, campos: CamposExtraidos): Promise<ResultadoIntencao> {
+  if (!campos.safraCultura) return { perguntar: 'safraCultura', pergunta: 'Qual é a cultura ou atividade? (ex: soja, milho, boi gordo, cordeiro)' };
+  if (!campos.safraAreaHa) return { perguntar: 'safraAreaHa', pergunta: `Quantos hectares de ${campos.safraCultura}?` };
+
+  const { fazenda, perguntar, pergunta, resposta } = await resolverFazendaOuPerguntar(sessao, campos);
+  if (resposta) return { resposta };
+  if (perguntar) return { perguntar, pergunta };
+
+  const culturaMap: Record<string, string> = {
+    soja: 'SOJA', milho: 'MILHO', trigo: 'TRIGO', arroz: 'ARROZ', feijao: 'FEIJAO',
+    'boi gordo': 'BOI_GORDO', boi: 'BOI_GORDO', gado: 'BOI_GORDO', pecuaria: 'BOI_GORDO', bovino: 'BOI_GORDO',
+    cordeiro: 'CORDEIRO', ovino: 'CORDEIRO', ovinos: 'CORDEIRO',
+    suino: 'SUINO', suinos: 'SUINO', porco: 'SUINO',
+    bufalo: 'BUFALO', leite: 'LEITE',
+  };
+  const culturaEnum = culturaMap[normalizar(campos.safraCultura)] ?? campos.safraCultura.toUpperCase().replace(/\s+/g, '_');
+  const ano = campos.safraAno ?? new Date().getFullYear().toString();
+
+  if (!campos.confirmado) {
+    return pedirConfirmacao([
+      ['Cultura', campos.safraCultura],
+      ['Área', `${campos.safraAreaHa} ha`],
+      ['Ano safra', ano],
+      ['Fazenda', fazenda!.nome],
+    ]);
+  }
+
+  await backendClient.criarSafra(sessao.token, fazenda!.slug, {
+    cultura: culturaEnum,
+    areaPlantadaHa: campos.safraAreaHa,
+    anoSafra: ano,
+    statusSafra: 'EM_ANDAMENTO',
+  });
+
+  return {
+    resposta: `Safra de ${campos.safraCultura} cadastrada: ${campos.safraAreaHa} ha na ${fazenda!.nome} (${ano}). ✅\nAgora registre as despesas e vendas vinculadas a ela pelo app ou aqui mesmo.`,
+  };
+}
+
 const HANDLERS: Record<string, (sessao: SessaoWhatsapp, campos: CamposExtraidos) => Promise<ResultadoIntencao>> = {
   REGISTRAR_DESPESA: registrarDespesa,
   REGISTRAR_CONTA_PAGAR: registrarContaPagar,
@@ -547,6 +743,9 @@ const HANDLERS: Record<string, (sessao: SessaoWhatsapp, campos: CamposExtraidos)
   LISTAR_ALERTAS_PRECO: listarAlertasPreco,
   CANCELAR_ALERTA_PRECO: cancelarAlertaPreco,
   CADASTRAR_MAQUINA: cadastrarMaquina,
+  REGISTRAR_MANUTENCAO_MAQUINA: registrarManutencaoMaquina,
+  CADASTRAR_ARRENDAMENTO: cadastrarArrendamento,
+  CADASTRAR_SAFRA: cadastrarSafra,
   SAUDACAO: saudacao,
 };
 
