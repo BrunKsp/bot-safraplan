@@ -25,6 +25,12 @@ export type Intent =
   | 'REGISTRAR_MANUTENCAO_MAQUINA'
   | 'CADASTRAR_ARRENDAMENTO'
   | 'CADASTRAR_SAFRA'
+  | 'CONSULTAR_MAQUINAS'
+  | 'CONSULTAR_MANUTENCOES'
+  | 'CONSULTAR_ARRENDAMENTOS'
+  | 'CONSULTAR_SAFRAS'
+  | 'CONSULTAR_DESPESAS'
+  | 'CONSULTAR_PRECO_UNITARIO'
   | 'SAUDACAO'
   | 'AJUDA'
   | 'NAO_ENTENDI';
@@ -85,6 +91,14 @@ export interface CamposExtraidos {
   safraCultura?: string;
   safraAreaHa?: number;
   safraAno?: string;
+  // Campos de CONSULTAR_DESPESAS
+  consultaCategoria?: string;
+  consultaPeriodo?: string;
+  // Campos de CONSULTAR_PRECO_UNITARIO
+  consultaQuantidade?: number;
+  consultaTotal?: number;
+  consultaUnidade?: string;
+  consultaDescricao?: string;
   // Preenchido pelo orquestrador (não pela IA) quando o produtor confirma o resumo do lançamento
   // — não faz parte do schema de tool-calling. Enquanto ausente/false, os handlers de registro
   // (despesa, conta a pagar/receber, venda) só mostram um resumo e pedem confirmação.
@@ -111,6 +125,12 @@ const INTENTS: Intent[] = [
   'REGISTRAR_MANUTENCAO_MAQUINA',
   'CADASTRAR_ARRENDAMENTO',
   'CADASTRAR_SAFRA',
+  'CONSULTAR_MAQUINAS',
+  'CONSULTAR_MANUTENCOES',
+  'CONSULTAR_ARRENDAMENTOS',
+  'CONSULTAR_SAFRAS',
+  'CONSULTAR_DESPESAS',
+  'CONSULTAR_PRECO_UNITARIO',
   'SAUDACAO',
   'AJUDA',
   'NAO_ENTENDI',
@@ -164,6 +184,12 @@ const PARAMETROS = {
     safraCultura: { type: 'string', description: 'Cultura ou atividade da safra em texto livre (ex: soja, milho, boi gordo, cordeiro). Só para CADASTRAR_SAFRA.' },
     safraAreaHa: { type: 'number', description: 'Área plantada/utilizada em hectares. Só para CADASTRAR_SAFRA.' },
     safraAno: { type: 'string', description: 'Ano safra (ex: "2025", "2024/2025"). Se não mencionado, use o ano atual.' },
+    consultaCategoria: { type: 'string', description: 'Categoria de despesa para filtro em CONSULTAR_DESPESAS (ex: combustível, insumos, manutenção).' },
+    consultaPeriodo: { type: 'string', description: 'Período em texto livre para CONSULTAR_DESPESAS (ex: "este mês", "outubro", "último trimestre", "2026"). O handler resolve para datas.' },
+    consultaQuantidade: { type: 'number', description: 'Quantidade de unidades na compra em CONSULTAR_PRECO_UNITARIO (ex: 100 sacos).' },
+    consultaTotal: { type: 'number', description: 'Valor total pago na compra em CONSULTAR_PRECO_UNITARIO (ex: 10000).' },
+    consultaUnidade: { type: 'string', description: 'Nome da unidade em CONSULTAR_PRECO_UNITARIO (ex: saco, litro, kg, tonelada, arroba).' },
+    consultaDescricao: { type: 'string', description: 'Nome do produto/insumo para buscar em despesas passadas em CONSULTAR_PRECO_UNITARIO (ex: herbicida, semente, adubo).' },
   },
   required: ['intent'],
 };
@@ -214,6 +240,15 @@ Exemplos de intenção:
 - "tenho terra arrendada para um vizinho, 40 ha a R$200/ha" -> CADASTRAR_ARRENDAMENTO (arrendamentoAreaHa=40, arrendamentoValorPorHectare=200, arrendamentoUnidade=REAIS, arrendamentoTipo=ARRENDADOR)
 - "plantei 60 ha de soja" / "quero registrar safra de soja" -> CADASTRAR_SAFRA (safraCultura="soja", safraAreaHa=60)
 - "tenho 30 hectares de gado" / "atividade de pecuária com 50 ha" -> CADASTRAR_SAFRA (safraCultura="BOI_GORDO", safraAreaHa=30)
+
+- "quais são minhas máquinas" / "lista de equipamentos" / "que maquinários tenho" -> CONSULTAR_MAQUINAS
+- "manutenções do trator" / "histórico de revisões" / "o que fiz no John Deere" -> CONSULTAR_MANUTENCOES (maquinaIdentificacao="trator"/"John Deere" se mencionado)
+- "meus arrendamentos" / "quais terras arrendo" / "quanto pago de arrendamento" -> CONSULTAR_ARRENDAMENTOS
+- "minhas safras" / "como estão minhas safras" / "o que tenho plantado" -> CONSULTAR_SAFRAS
+- "minhas despesas de combustível" / "quanto gastei com insumos em outubro" / "maiores gastos do mês" -> CONSULTAR_DESPESAS (consultaCategoria="combustível" e/ou consultaPeriodo="outubro" se mencionados)
+- "qual o valor por saco do herbicida que comprei" -> CONSULTAR_PRECO_UNITARIO (consultaDescricao="herbicida")
+- "comprei 100 sacos por R$10.000, quanto ficou cada saco" -> CONSULTAR_PRECO_UNITARIO (consultaQuantidade=100, consultaTotal=10000, consultaUnidade="saco")
+- "paguei 50000 por uma carga de 200 sacos de semente, qual o preço unitário" -> CONSULTAR_PRECO_UNITARIO (consultaQuantidade=200, consultaTotal=50000, consultaUnidade="saco", consultaDescricao="semente")
 
 Sempre que faltar informação para registrar algo (ex: valor não mencionado), ainda assim classifique a intenção corretamente e deixe os campos que faltam de fora — quem trata os campos faltando é o backend do bot, não você.`;
 }

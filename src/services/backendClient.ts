@@ -168,6 +168,11 @@ export async function listarMaquinas(token: string): Promise<any[]> {
   return Array.isArray(data) ? data : data.dados ?? [];
 }
 
+export async function buscarMaquina(token: string, slug: string): Promise<any> {
+  const { data } = await api.get(`/maquinas/${slug}`, comToken(token));
+  return data;
+}
+
 export async function registrarManutencaoMaquina(token: string, maquinaSlug: string, payload: Record<string, unknown>): Promise<any> {
   const { data } = await api.post(`/maquinas/${maquinaSlug}/manutencoes`, payload, comToken(token));
   return data;
