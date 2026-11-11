@@ -66,6 +66,48 @@ function pedirConfirmacao(linhas: Array<[string, string | undefined]>): Resultad
 }
 
 async function registrarDespesa(sessao: SessaoWhatsapp, campos: CamposExtraidos): Promise<ResultadoIntencao> {
+  const itens = (campos.itensDespesa ?? []).filter((item) =>
+    item.descricao?.trim() && Number.isFinite(item.valor) && item.valor > 0,
+  );
+
+  if (itens.length > 0) {
+    const { fazenda, perguntar, pergunta, resposta } = await resolverFazendaOuPerguntar(sessao, campos);
+    if (resposta) return { resposta };
+    if (perguntar) return { perguntar, pergunta };
+
+    campos.data = campos.data || hojeISO();
+    campos.formaPagamento = campos.formaPagamento || 'OUTRO';
+    const total = itens.reduce((soma, item) => soma + item.valor, 0);
+
+    if (!campos.confirmado) {
+      const linhas: Array<[string, string | undefined]> = [
+        ['Fazenda', fazenda!.nome],
+        ['Data padrão', campos.data],
+        ['Lançamentos', `${itens.length} despesas — total ${moeda(total)}`],
+        ...itens.slice(0, 15).map((item) => ['Item', `${item.descricao}: ${moeda(item.valor)}`] as [string, string]),
+      ];
+      if (itens.length > 15) linhas.push(['Itens restantes', `e mais ${itens.length - 15}`]);
+      return pedirConfirmacao(linhas);
+    }
+
+    await session.salvarFazendaPadrao(sessao.celular, fazenda!.slug);
+    const despesas = [];
+    for (const item of itens) {
+      const categoria = await resolverCategoria(sessao.token, item.categoria || campos.categoria);
+      despesas.push(await backendClient.criarDespesa(sessao.token, {
+        fazendaSlug: fazenda!.slug,
+        categoriaSlug: categoria.slug,
+        descricao: item.descricao.trim(),
+        valor: item.valor,
+        data: item.data || campos.data,
+        formaPagamento: item.formaPagamento || campos.formaPagamento,
+        anexoUrl: campos.anexoUrl,
+      }));
+    }
+
+    return { resposta: `${despesas.length} despesas registradas, total de ${moeda(total)}, na fazenda ${fazenda!.nome}. ✅` };
+  }
+
   if (!campos.valor) return { resposta: 'Quanto foi o valor da despesa?' };
 
   // Compra parcelada = os dois lançamentos: a despesa em si com o valor bruto (categorização,

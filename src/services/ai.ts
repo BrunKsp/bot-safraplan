@@ -38,6 +38,14 @@ export type Intent =
 export type FormaPagamento = 'DINHEIRO' | 'PIX' | 'CARTAO' | 'BOLETO' | 'FINANCIAMENTO' | 'OUTRO';
 export type UnidadeMedida = 'KG' | 'SACA' | 'TON' | 'ARROBA' | 'L' | 'UNIDADE';
 
+export interface ItemDespesaExtraido {
+  descricao: string;
+  valor: number;
+  categoria?: string;
+  data?: string;
+  formaPagamento?: FormaPagamento;
+}
+
 export interface CamposExtraidos {
   intent: Intent;
   valor?: number;
@@ -99,6 +107,9 @@ export interface CamposExtraidos {
   consultaTotal?: number;
   consultaUnidade?: string;
   consultaDescricao?: string;
+  // Documento com mais de um gasto: cada linha vira uma despesa independente após confirmação.
+  // Não é usado para uma mensagem comum de uma única despesa.
+  itensDespesa?: ItemDespesaExtraido[];
   // Preenchido pelo orquestrador (não pela IA) quando o produtor confirma o resumo do lançamento
   // — não faz parte do schema de tool-calling. Enquanto ausente/false, os handlers de registro
   // (despesa, conta a pagar/receber, venda) só mostram um resumo e pedem confirmação.
@@ -190,6 +201,21 @@ const PARAMETROS = {
     consultaTotal: { type: 'number', description: 'Valor total pago na compra em CONSULTAR_PRECO_UNITARIO (ex: 10000).' },
     consultaUnidade: { type: 'string', description: 'Nome da unidade em CONSULTAR_PRECO_UNITARIO (ex: saco, litro, kg, tonelada, arroba).' },
     consultaDescricao: { type: 'string', description: 'Nome do produto/insumo para buscar em despesas passadas em CONSULTAR_PRECO_UNITARIO (ex: herbicida, semente, adubo).' },
+    itensDespesa: {
+      type: 'array',
+      description: 'Somente para REGISTRAR_DESPESA quando a imagem, PDF ou texto listar vários gastos. Um item por linha, sem somar os valores.',
+      items: {
+        type: 'object',
+        properties: {
+          descricao: { type: 'string', description: 'Descrição fiel e curta da linha do documento.' },
+          valor: { type: 'number', description: 'Valor daquela linha, em reais.' },
+          categoria: { type: 'string', description: 'Categoria inferida para aquela linha.' },
+          data: { type: 'string', description: 'Data YYYY-MM-DD da linha, se visível.' },
+          formaPagamento: { type: 'string', enum: FORMAS_PAGAMENTO, description: 'Forma de pagamento da linha, se visível.' },
+        },
+        required: ['descricao', 'valor'],
+      },
+    },
   },
   required: ['intent'],
 };
@@ -202,6 +228,8 @@ Sua única função é interpretar a mensagem do produtor e chamar a ferramenta 
 A data de hoje é ${hoje} (formato YYYY-MM-DD). Resolva expressões relativas de data ("hoje", "ontem", "dia 15") com base nela.
 
 IMPORTANTE sobre o campo "categoria" (REGISTRAR_DESPESA): preencha SEMPRE com sua melhor estimativa, mesmo que a palavra "categoria" nunca apareça na mensagem — infira a partir do item comprado (ex: "sementes"/"adubo"/"defensivo" -> categoria=Insumos ou o nome específico do item; "combustível"/"diesel"/"gasolina" -> categoria=Combustível; "mecânico"/"peça"/"oficina" -> categoria=Manutenção; "salário"/"diarista" -> categoria=Mão de obra). Só deixe "categoria" de fora se a mensagem for genérica demais pra ter qualquer pista (ex: "gastei 200 hoje", sem dizer com o quê). O campo "descricao" também deve ser sempre preenchido com um resumo curto do que foi comprado/pago, nunca deixado vazio.
+
+IMPORTANTE para documentos ou mensagens com VÁRIAS linhas de gastos: use intent REGISTRAR_DESPESA e preencha o campo itensDespesa com UMA entrada para cada linha, mantendo descrição e valor individuais. Não resuma tudo como "despesas diversas" nem some os itens em valor. Use valor apenas para um lançamento único.
 
 IMPORTANTE sobre compra parcelada ("gastei"/"comprei" + "parcelado"/"em Nx"/"N vezes"): use SEMPRE REGISTRAR_DESPESA (nunca REGISTRAR_CONTA_PAGAR) — o produtor está descrevendo uma COMPRA que ele fez, não uma conta avulsa. Preencha "valor" com o valor TOTAL da compra (não divida pelas parcelas — quem divide é o sistema), "numeroParcelas" com a quantidade de parcelas, e "dataVencimento" com a data da 1ª parcela (se não informada, use a mesma data da compra). REGISTRAR_CONTA_PAGAR só se aplica quando NÃO há uma compra/despesa sendo descrita — é uma conta a pagar avulsa (ex: aluguel, boleto de terceiro) que o produtor está só anotando, sem ter "gastado" nada ainda; nesse caso sim "valor" é o valor de CADA parcela.
 
@@ -585,6 +613,8 @@ CASO (c) — FOTO DE MÁQUINA: use intent CADASTRAR_MAQUINA e preencha SOMENTE o
 NÃO tente extrair valorAquisicao, dataAquisicao ou vidaUtilAnos de uma foto — essas informações raramente estão visíveis e o sistema vai perguntar ao produtor.
 
 Na grande maioria dos demais casos a intenção correta é REGISTRAR_DESPESA (valor total, descrição do que foi comprado, categoria — ex: combustível, insumos, manutenção — e forma de pagamento se visível no comprovante).
+
+Se o documento listar VÁRIAS despesas (por exemplo uma relação de contas com um valor por linha), use o campo itensDespesa: uma entrada por linha, com a descrição e o valor exatamente correspondentes. Não consolide os itens nem substitua as descrições por "despesas diversas". Use valor apenas quando houver uma única despesa.
 
 IMPORTANTE sobre o campo "valor" — a regra muda conforme o tipo de imagem:
 - Se for um documento IMPRESSO (nota fiscal/cupom/comprovante): use SEMPRE o valor total IMPRESSO (linha "VALOR TOTAL", "TOTAL A PAGAR" ou equivalente). Rabiscos, números circulados ou anotações à mão feitas NAS BORDAS/VERSO desse documento impresso NÃO são o valor da despesa — ignore-os, mesmo que pareçam mais em destaque que o total impresso (produtor às vezes anota outra coisa ali, tipo hodômetro ou número de nota).
