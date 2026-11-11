@@ -776,6 +776,191 @@ async function cadastrarSafra(sessao: SessaoWhatsapp, campos: CamposExtraidos): 
   };
 }
 
+async function consultarMaquinas(sessao: SessaoWhatsapp): Promise<ResultadoIntencao> {
+  const maquinas = await backendClient.listarMaquinas(sessao.token)
+  if (!maquinas.length) return { resposta: 'Nenhuma máquina cadastrada. Me diga *cadastrar máquina* e eu registro pra você.' }
+
+  const linhas = maquinas.map((m: any) => {
+    const partes = [m.nome, m.tipo ? `(${m.tipo})` : null, m.marca ?? null, m.anoFabricacao ?? null].filter(Boolean)
+    return `• ${partes.join(' · ')}`
+  })
+  return { resposta: `🚜 *Suas máquinas (${maquinas.length})*\n${linhas.join('\n')}` }
+}
+
+async function consultarManutencoes(sessao: SessaoWhatsapp, campos: CamposExtraidos): Promise<ResultadoIntencao> {
+  const maquinas = await backendClient.listarMaquinas(sessao.token)
+  if (!maquinas.length) return { resposta: 'Nenhuma máquina cadastrada.' }
+
+  let alvo: any[] = maquinas
+  if (campos.maquinaIdentificacao) {
+    const termo = normalizar(campos.maquinaIdentificacao)
+    const filtradas = maquinas.filter((m: any) => normalizar(m.nome).includes(termo) || normalizar(m.tipo ?? '').includes(termo))
+    if (filtradas.length) alvo = filtradas
+  }
+
+  const blocos: string[] = []
+  for (const m of alvo.slice(0, 3)) {
+    const detalhe = await backendClient.buscarMaquina(sessao.token, m.slug)
+    const manutencoes: any[] = detalhe.manutencoes ?? []
+    if (!manutencoes.length) {
+      blocos.push(`*${m.nome}*: nenhuma manutenção registrada.`)
+      continue
+    }
+    const recentes = manutencoes.slice(-5).reverse()
+    const linhas = recentes.map((mn: any) => `  · ${mn.tipo ?? 'Manutenção'} — ${mn.data ?? ''} — ${mn.custo != null ? moeda(mn.custo) : 'sem custo'}`)
+    blocos.push(`*${m.nome}*\n${linhas.join('\n')}`)
+  }
+
+  return { resposta: `🔧 *Histórico de manutenções*\n\n${blocos.join('\n\n')}` }
+}
+
+async function consultarArrendamentos(sessao: SessaoWhatsapp): Promise<ResultadoIntencao> {
+  const arrendamentos = await backendClient.listarArrendamentos(sessao.token)
+  if (!arrendamentos.length) return { resposta: 'Nenhum arrendamento cadastrado. Me diga *cadastrar arrendamento* para registrar.' }
+
+  const linhas = arrendamentos.map((a: any) => {
+    const tipo = a.tipo === 'ARRENDADOR' ? 'você recebe' : 'você paga'
+    const valor = a.unidade === 'SACAS' ? `${a.valorPorHectare} sacas/ha` : `${moeda(a.valorPorHectare)}/ha`
+    const locador = a.locador ? ` · ${a.locador}` : ''
+    return `• ${a.fazenda?.nome ?? 'Fazenda'} — ${a.areaHa} ha — ${valor} (${tipo})${locador}`
+  })
+  return { resposta: `📋 *Arrendamentos (${arrendamentos.length})*\n${linhas.join('\n')}` }
+}
+
+async function consultarSafras(sessao: SessaoWhatsapp): Promise<ResultadoIntencao> {
+  const fazendas = await backendClient.listarFazendas(sessao.token)
+  if (!fazendas.length) return { resposta: 'Nenhuma fazenda cadastrada.' }
+
+  const blocos: string[] = []
+  for (const f of fazendas) {
+    const safras: any[] = await backendClient.listarSafras(sessao.token, f.slug)
+    const ativas = safras.filter((s: any) => s.statusSafra === 'EM_ANDAMENTO' || s.statusSafra === 'PLANEJAMENTO')
+    if (!ativas.length) continue
+    const linhas = ativas.map((s: any) => {
+      const area = s.areaPlantadaHa ? ` · ${s.areaPlantadaHa} ha` : ''
+      const status = s.statusSafra === 'EM_ANDAMENTO' ? 'em andamento' : 'planejamento'
+      return `  · ${normalizar(s.cultura).replace(/^./, (c: string) => c.toUpperCase()).replace(/_/g, ' ')}${area} (${status})`
+    })
+    blocos.push(`*${f.nome}*\n${linhas.join('\n')}`)
+  }
+
+  if (!blocos.length) return { resposta: 'Nenhuma safra ativa no momento. Me diga *cadastrar safra* para registrar.' }
+  return { resposta: `🌾 *Safras ativas*\n\n${blocos.join('\n\n')}` }
+}
+
+function resolverPeriodo(periodo: string | undefined, hoje: Date): { dataInicio: string; dataFim: string; label: string } {
+  const ano = hoje.getFullYear()
+  const mes = hoje.getMonth()
+  const nomes = ['janeiro','fevereiro','março','abril','maio','junho','julho','agosto','setembro','outubro','novembro','dezembro']
+
+  if (!periodo) {
+    const mm = String(mes + 1).padStart(2, '0')
+    const ultimoDia = new Date(ano, mes + 1, 0).getDate()
+    return { dataInicio: `${ano}-${mm}-01`, dataFim: `${ano}-${mm}-${ultimoDia}`, label: `${nomes[mes]}/${ano}` }
+  }
+
+  const p = normalizar(periodo)
+
+  // "último trimestre" / "trimestre"
+  if (p.includes('trimestre')) {
+    const d = new Date(ano, mes - 2, 1)
+    return { dataInicio: d.toISOString().slice(0, 10), dataFim: hoje.toISOString().slice(0, 10), label: 'últimos 3 meses' }
+  }
+  // "semana" / "última semana"
+  if (p.includes('semana')) {
+    const d = new Date(hoje); d.setDate(d.getDate() - 7)
+    return { dataInicio: d.toISOString().slice(0, 10), dataFim: hoje.toISOString().slice(0, 10), label: 'última semana' }
+  }
+  // "este ano" / ano com 4 dígitos
+  const anoMatch = p.match(/\b(20\d{2})\b/)
+  if (anoMatch || p.includes('ano')) {
+    const a = anoMatch ? parseInt(anoMatch[1]) : ano
+    return { dataInicio: `${a}-01-01`, dataFim: `${a}-12-31`, label: String(a) }
+  }
+  // nome do mês
+  for (let i = 0; i < nomes.length; i++) {
+    if (p.includes(nomes[i])) {
+      const mm = String(i + 1).padStart(2, '0')
+      const a = i > mes ? ano - 1 : ano
+      const ultimoDia = new Date(a, i + 1, 0).getDate()
+      return { dataInicio: `${a}-${mm}-01`, dataFim: `${a}-${mm}-${ultimoDia}`, label: `${nomes[i]}/${a}` }
+    }
+  }
+
+  // fallback: mês atual
+  const mm = String(mes + 1).padStart(2, '0')
+  const ultimoDia = new Date(ano, mes + 1, 0).getDate()
+  return { dataInicio: `${ano}-${mm}-01`, dataFim: `${ano}-${mm}-${ultimoDia}`, label: `${nomes[mes]}/${ano}` }
+}
+
+async function consultarDespesas(sessao: SessaoWhatsapp, campos: CamposExtraidos): Promise<ResultadoIntencao> {
+  const { dataInicio, dataFim, label } = resolverPeriodo(campos.consultaPeriodo, new Date())
+  const params: Record<string, unknown> = { dataInicio, dataFim, limit: 100 }
+
+  let categoriaFiltro = ''
+  if (campos.consultaCategoria) {
+    const cats = await backendClient.listarCategorias(sessao.token)
+    const termo = normalizar(campos.consultaCategoria)
+    const cat = cats.find((c: any) => normalizar(c.nome).includes(termo))
+    if (cat) { params.categoriaId = cat.id; categoriaFiltro = ` de ${cat.nome}` }
+  }
+
+  const resultado = await backendClient.listarDespesas(sessao.token, params)
+  const lista: any[] = Array.isArray(resultado) ? resultado : resultado.dados ?? []
+
+  if (!lista.length) return { resposta: `Nenhuma despesa${categoriaFiltro} encontrada em ${label}.` }
+
+  const ordenadas = [...lista].sort((a, b) => Number(b.valor) - Number(a.valor)).slice(0, 10)
+  const total = lista.reduce((acc: number, d: any) => acc + Number(d.valor || 0), 0)
+
+  const linhas = ordenadas.map((d: any) => `• ${d.descricao ?? d.categoria?.nome ?? '—'} — ${moeda(Number(d.valor))} (${d.data ?? ''})`)
+  return {
+    resposta: [
+      `💸 *Despesas${categoriaFiltro} — ${label}*`,
+      `Total: *${moeda(total)}* (${lista.length} lançamentos)`,
+      '',
+      ...linhas,
+      lista.length > 10 ? `\n_...e mais ${lista.length - 10} lançamentos_` : '',
+    ].filter(l => l !== '').join('\n'),
+  }
+}
+
+async function consultarPrecoUnitario(sessao: SessaoWhatsapp, campos: CamposExtraidos): Promise<ResultadoIntencao> {
+  const { consultaQuantidade, consultaTotal, consultaUnidade, consultaDescricao } = campos
+  const unidade = consultaUnidade ?? 'unidade'
+
+  // Cálculo direto — tem quantidade e total
+  if (consultaQuantidade && consultaTotal) {
+    const precoUnitario = consultaTotal / consultaQuantidade
+    const desc = consultaDescricao ? ` de ${consultaDescricao}` : ''
+    return { resposta: `📐 Cada ${unidade}${desc} ficou *${moeda(precoUnitario)}*\n(${moeda(consultaTotal)} ÷ ${consultaQuantidade} ${unidade}s)` }
+  }
+
+  // Busca em despesas passadas
+  if (consultaDescricao) {
+    const hoje = new Date()
+    const tres = new Date(hoje.getFullYear(), hoje.getMonth() - 3, 1)
+    const resultado = await backendClient.listarDespesas(sessao.token, {
+      dataInicio: tres.toISOString().slice(0, 10),
+      dataFim: hoje.toISOString().slice(0, 10),
+      limit: 200,
+    })
+    const lista: any[] = Array.isArray(resultado) ? resultado : resultado.dados ?? []
+    const termo = normalizar(consultaDescricao)
+    const encontradas = lista.filter((d: any) => normalizar(d.descricao ?? '').includes(termo) || normalizar(d.categoria?.nome ?? '').includes(termo))
+
+    if (!encontradas.length) return { resposta: `Não encontrei nenhuma despesa com "${consultaDescricao}" nos últimos 3 meses.\n\nMe diga o total pago e a quantidade para eu calcular o preço unitário.` }
+
+    const mais = encontradas[0]
+    const linhas = [`Última compra de *${consultaDescricao}*:`, `• ${mais.descricao ?? consultaDescricao} — ${moeda(Number(mais.valor))} em ${mais.data ?? ''}`]
+    if (encontradas.length > 1) linhas.push(`\n_${encontradas.length - 1} compra(s) anterior(es) encontrada(s)._`)
+    linhas.push(`\nSe quiser o preço por ${unidade}, me diga a quantidade total dessa compra.`)
+    return { resposta: linhas.join('\n') }
+  }
+
+  return { resposta: `Me diz o total pago e a quantidade para eu calcular o preço por ${unidade}.\nEx: "comprei 100 sacos por R$10.000"` }
+}
+
 const HANDLERS: Record<string, (sessao: SessaoWhatsapp, campos: CamposExtraidos) => Promise<ResultadoIntencao>> = {
   REGISTRAR_DESPESA: registrarDespesa,
   REGISTRAR_CONTA_PAGAR: registrarContaPagar,
@@ -793,6 +978,12 @@ const HANDLERS: Record<string, (sessao: SessaoWhatsapp, campos: CamposExtraidos)
   REGISTRAR_MANUTENCAO_MAQUINA: registrarManutencaoMaquina,
   CADASTRAR_ARRENDAMENTO: cadastrarArrendamento,
   CADASTRAR_SAFRA: cadastrarSafra,
+  CONSULTAR_MAQUINAS: consultarMaquinas,
+  CONSULTAR_MANUTENCOES: consultarManutencoes,
+  CONSULTAR_ARRENDAMENTOS: consultarArrendamentos,
+  CONSULTAR_SAFRAS: consultarSafras,
+  CONSULTAR_DESPESAS: consultarDespesas,
+  CONSULTAR_PRECO_UNITARIO: consultarPrecoUnitario,
   SAUDACAO: saudacao,
 };
 
