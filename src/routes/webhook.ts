@@ -22,7 +22,7 @@
 
 import crypto from 'crypto';
 import express, { Request, Response } from 'express';
-import { handleMessage, handleImageMessage } from '../services/conversation';
+import { handleMessage, handleImageMessage, handlePdfMessage } from '../services/conversation';
 import { transcreverAudio } from '../services/ai';
 import * as waha from '../services/waha';
 import * as meta from '../services/meta';
@@ -113,9 +113,11 @@ async function handleWaha(req: Request, res: Response): Promise<void> {
   if (!payload.from || payload.from.endsWith('@g.us')) return; // ignora grupos
 
   const celular = waha.extrairCelular(payload.from);
-  const ehImagem = payload.hasMedia && typeof payload.media?.mimetype === 'string' && payload.media.mimetype.startsWith('image/');
+  const mimeType = payload.media?.mimetype;
+  const ehImagem = payload.hasMedia && typeof mimeType === 'string' && mimeType.startsWith('image/');
+  const ehPdf = payload.hasMedia && mimeType === 'application/pdf';
 
-  if (!ehImagem && (!payload.body || !payload.body.trim())) return; // ignora figurinhas, áudio, mídia sem legenda etc.
+  if (!ehImagem && !ehPdf && (!payload.body || !payload.body.trim())) return; // ignora mídia sem legenda não suportada
 
   await processarEvento({
     celular,
@@ -124,7 +126,11 @@ async function handleWaha(req: Request, res: Response): Promise<void> {
     processar: async () => {
       if (ehImagem) {
         const buffer = await waha.baixarMidia(payload.media.url);
-        return handleImageMessage({ celular, buffer, mimeType: payload.media.mimetype });
+        return handleImageMessage({ celular, buffer, mimeType });
+      }
+      if (ehPdf) {
+        const buffer = await waha.baixarMidia(payload.media.url);
+        return handlePdfMessage({ celular, buffer, mimeType });
       }
       return handleMessage({ celular, texto: payload.body.trim() });
     },
@@ -144,7 +150,7 @@ async function handleMeta(req: Request, res: Response): Promise<void> {
   const mensagem = valor?.messages?.[0];
 
   if (!mensagem) return; // status de entrega/leitura etc. — não é mensagem nova
-  if (mensagem.type !== 'text' && mensagem.type !== 'image') return; // ignora áudio, figurinhas etc.
+  if (mensagem.type !== 'text' && mensagem.type !== 'image' && mensagem.type !== 'document') return; // ignora áudio, figurinhas etc.
 
   const celular = mensagem.from;
 
@@ -158,6 +164,11 @@ async function handleMeta(req: Request, res: Response): Promise<void> {
       if (mensagem.type === 'image') {
         const { buffer, mimeType } = await meta.baixarMidia(mensagem.image.id);
         return handleImageMessage({ celular, buffer, mimeType });
+      }
+      if (mensagem.type === 'document') {
+        if (mensagem.document?.mime_type !== 'application/pdf') return 'Por enquanto consigo analisar documentos em PDF. Envie o arquivo nesse formato ou mande uma imagem.';
+        const { buffer, mimeType } = await meta.baixarMidia(mensagem.document.id);
+        return handlePdfMessage({ celular, buffer, mimeType });
       }
       return handleMessage({ celular, texto: mensagem.text.body.trim() });
     },
@@ -182,8 +193,9 @@ async function handleTwilio(req: Request, res: Response): Promise<void> {
   const numMedia = Number(req.body?.NumMedia || 0);
   const mimeType = req.body?.MediaContentType0;
   const ehImagem = numMedia > 0 && typeof mimeType === 'string' && mimeType.startsWith('image/');
+  const ehPdf = numMedia > 0 && mimeType === 'application/pdf';
 
-  if (!ehImagem && !corpo) return; // ignora figurinhas, áudio, mídia sem legenda etc.
+  if (!ehImagem && !ehPdf && !corpo) return; // ignora mídia sem legenda não suportada
 
   await processarEvento({
     celular,
@@ -193,6 +205,10 @@ async function handleTwilio(req: Request, res: Response): Promise<void> {
       if (ehImagem) {
         const buffer = await twilio.baixarMidia(req.body.MediaUrl0);
         return handleImageMessage({ celular, buffer, mimeType });
+      }
+      if (ehPdf) {
+        const buffer = await twilio.baixarMidia(req.body.MediaUrl0);
+        return handlePdfMessage({ celular, buffer, mimeType });
       }
       return handleMessage({ celular, texto: corpo });
     },
@@ -257,6 +273,26 @@ function jaProcessada(messageId: string | undefined): boolean {
   return false;
 }
 
+// Detecta mensagens automáticas (ausência, bots de marketing, auto-resposta de operadoras etc.)
+// que não devem ser processadas pelo bot. Checa padrões comuns em PT-BR e EN.
+const PADROES_MENSAGEM_AUTOMATICA = [
+  /deixe\s+sua\s+mensagem/i,
+  /respondo\s+(o\s+mais\s+breve|em\s+breve|assim\s+que\s+poss)/i,
+  /estou\s+(fora|ausente|indispon[íi]vel)/i,
+  /mensagem\s+autom[aá]tica/i,
+  /auto[\s-]?reply/i,
+  /out\s+of\s+office/i,
+  /n[ãa]o\s+estou\s+dispon[íi]vel/i,
+  // Bots de operadora/marketing (recarga, promoção etc.)
+  /escolher\s+op[çc][ãa]o/i,
+  /valor\s+da\s+recarga/i,
+  /forma\s+de\s+pagamento\s+você\s+prefere/i,
+];
+
+function eMensagemAutomatica(texto: string): boolean {
+  return PADROES_MENSAGEM_AUTOMATICA.some((re) => re.test(texto));
+}
+
 async function handleUazapi(req: Request, res: Response): Promise<void> {
   if (req.query.token !== process.env.WEBHOOK_SECRET) {
     res.sendStatus(403);
@@ -279,11 +315,16 @@ async function handleUazapi(req: Request, res: Response): Promise<void> {
 
   const textoBruto = mensagem.text ?? (typeof mensagem.content === 'string' ? mensagem.content : undefined);
   const ehImagem = mensagem.messageType === 'ImageMessage' && typeof mensagem.content === 'object' && !!mensagem.content;
+  const ehPdf = mensagem.messageType === 'DocumentMessage' && typeof mensagem.content === 'object' && (mensagem.content as ConteudoMidiaUazapi).mimetype === 'application/pdf';
   const ehAudio = mensagem.messageType === 'AudioMessage' && typeof mensagem.content === 'object' && !!mensagem.content;
 
-  if (!ehImagem && !ehAudio && !textoBruto?.trim()) return; // ignora figurinhas, mídia sem legenda etc.
+  if (!ehImagem && !ehPdf && !ehAudio && !textoBruto?.trim()) return; // ignora mídia sem legenda não suportada
+  if (textoBruto && eMensagemAutomatica(textoBruto)) {
+    console.log(`[webhook:uazapi] ignorado (mensagem automática) celular=${celular}`);
+    return;
+  }
 
-  console.log(`[webhook:uazapi] recebido celular=${celular} tipo=${ehImagem ? 'imagem' : ehAudio ? 'audio' : 'texto'} texto=${JSON.stringify(textoBruto)}`);
+  console.log(`[webhook:uazapi] recebido celular=${celular} tipo=${ehImagem ? 'imagem' : ehPdf ? 'pdf' : ehAudio ? 'audio' : 'texto'} texto=${JSON.stringify(textoBruto)}`);
 
   await processarEvento({
     celular,
@@ -293,6 +334,10 @@ async function handleUazapi(req: Request, res: Response): Promise<void> {
       if (ehImagem) {
         const { buffer, mimeType } = await uazapi.baixarMidia(mensagem.messageid ?? '', mensagem.content as ConteudoMidiaUazapi);
         return handleImageMessage({ celular, buffer, mimeType });
+      }
+      if (ehPdf) {
+        const { buffer, mimeType } = await uazapi.baixarMidia(mensagem.messageid ?? '', mensagem.content as ConteudoMidiaUazapi);
+        return handlePdfMessage({ celular, buffer, mimeType });
       }
       if (ehAudio) {
         const { buffer, mimeType } = await uazapi.baixarMidia(mensagem.messageid ?? '', mensagem.content as ConteudoMidiaUazapi);

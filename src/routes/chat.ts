@@ -14,7 +14,7 @@ import express, { Request, Response } from 'express';
 import autenticarCliente from '../middlewares/autenticarCliente';
 import * as session from '../services/session';
 import * as history from '../services/history';
-import { handleMessage, handleImageMessage } from '../services/conversation';
+import { handleMessage, handleImageMessage, handlePdfMessage } from '../services/conversation';
 import { gerarInsightsDoMes } from '../services/insights';
 import { SessaoWhatsapp } from '../database/entities/SessaoWhatsapp';
 
@@ -95,7 +95,9 @@ router.post('/imagem', async (req: Request, res: Response) => {
 
   try {
     const buffer = Buffer.from(imagemBase64, 'base64');
-    const resposta = await handleImageMessage({ celular: sessao.celular, buffer, mimeType });
+    const resposta = mimeType === 'application/pdf'
+      ? await handlePdfMessage({ celular: sessao.celular, buffer, mimeType })
+      : await handleImageMessage({ celular: sessao.celular, buffer, mimeType });
     res.json({ resposta });
   } catch (err: any) {
     console.error(`Erro ao processar imagem direta de ${sessao.celular}:`, err.response?.data || err.message);

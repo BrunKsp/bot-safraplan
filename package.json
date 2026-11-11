@@ -20,6 +20,7 @@
     "express": "^4.21.2",
     "jsonwebtoken": "^9.0.3",
     "openai": "^6.33.0",
+    "pdf-parse": "^2.4.5",
     "pg": "^8.13.3",
     "reflect-metadata": "^0.2.2",
     "twilio": "^6.1.0",

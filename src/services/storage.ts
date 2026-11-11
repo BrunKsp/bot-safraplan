@@ -19,6 +19,7 @@ const EXTENSAO_POR_MIME: Record<string, string> = {
   'image/png': 'png',
   'image/webp': 'webp',
   'image/heic': 'heic',
+  'application/pdf': 'pdf',
 };
 
 function extensaoParaMime(mimeType: string): string {
@@ -26,7 +27,7 @@ function extensaoParaMime(mimeType: string): string {
 }
 
 // Sobe a imagem para `clientes/{celular}/{uuid}.{ext}` e retorna a URL pública.
-export async function uploadImagem(buffer: Buffer, celular: string, mimeType: string): Promise<string> {
+export async function uploadArquivo(buffer: Buffer, celular: string, mimeType: string): Promise<string> {
   const key = `clientes/${celular}/${crypto.randomUUID()}.${extensaoParaMime(mimeType)}`;
 
   await r2.send(
@@ -40,3 +41,6 @@ export async function uploadImagem(buffer: Buffer, celular: string, mimeType: st
 
   return `${process.env.CLOUDFLARE_PUBLIC_BASE_URL}/${key}`;
 }
+
+// Mantido para os chamadores existentes; documentos e imagens usam o mesmo armazenamento.
+export const uploadImagem = uploadArquivo;

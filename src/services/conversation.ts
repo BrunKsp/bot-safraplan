@@ -5,6 +5,7 @@ import * as session from './session';
 import * as history from './history';
 import * as storage from './storage';
 import * as numerosNaoCadastrados from './numerosNaoCadastrados';
+import { PDFParse } from 'pdf-parse';
 import { extrairIntencao, classificarImagem, CamposExtraidos, FormaPagamento } from './ai';
 import { tratarIntencao } from '../intents/handlers';
 import { consultarWhatsapp } from './backendClient';
@@ -323,5 +324,52 @@ export async function handleImageMessage({
 
   if (anexoUrl) campos.anexoUrl = anexoUrl;
 
+  return processarCampos(sessao, celular, campos);
+}
+
+// PDFs não podem ser enviados como `image_url` para todos os provedores de IA configuráveis.
+// Extraímos seu texto localmente e pedimos ao mesmo modelo que interprete as linhas financeiras.
+// O PDF original também fica anexado a cada lançamento criado a partir dele.
+export async function handlePdfMessage({
+  celular,
+  buffer,
+  mimeType = 'application/pdf',
+}: {
+  celular: string;
+  buffer: Buffer;
+  mimeType?: string;
+}): Promise<string> {
+  const sessao = await resolverSessao(celular);
+  if (!sessao) {
+    const resposta = await numerosNaoCadastrados.tratar(celular);
+    return resposta ?? '';
+  }
+
+  await history.salvarMensagem(celular, 'user', '[PDF enviado]');
+
+  const parser = new PDFParse({ data: buffer });
+  let texto: string;
+  try {
+    texto = (await parser.getText()).text.trim();
+  } finally {
+    await parser.destroy();
+  }
+
+  if (!texto) {
+    return 'Não consegui ler texto nesse PDF. Envie uma imagem nítida das páginas ou um PDF com texto selecionável.';
+  }
+
+  const [campos, anexoUrl] = await Promise.all([
+    extrairComFallback(
+      () => extrairIntencao([], `Este texto foi extraído de um PDF financeiro. Preserve cada linha como um item independente quando houver vários gastos:\n\n${texto}`),
+      celular,
+    ),
+    storage.uploadArquivo(buffer, celular, mimeType).catch((err) => {
+      console.error(`Erro ao subir PDF para o R2 (${celular}):`, err.message);
+      return undefined;
+    }),
+  ]);
+
+  if (anexoUrl) campos.anexoUrl = anexoUrl;
   return processarCampos(sessao, celular, campos);
 }
