@@ -414,6 +414,52 @@ async function consultarResumo(sessao: SessaoWhatsapp): Promise<ResultadoIntenca
   };
 }
 
+async function consultarMediaGastos(sessao: SessaoWhatsapp): Promise<ResultadoIntencao> {
+  const hoje = new Date()
+  const meses: { label: string; inicio: string; fim: string }[] = []
+
+  for (let i = 5; i >= 0; i--) {
+    const d = new Date(hoje.getFullYear(), hoje.getMonth() - i, 1)
+    const ano = d.getFullYear()
+    const mes = d.getMonth() + 1
+    const mm = String(mes).padStart(2, '0')
+    const ultimoDia = new Date(ano, mes, 0).getDate()
+    const nomes = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez']
+    meses.push({ label: `${nomes[mes - 1]}/${ano}`, inicio: `${ano}-${mm}-01`, fim: `${ano}-${mm}-${ultimoDia}` })
+  }
+
+  const totais: number[] = []
+  const linhasMeses: string[] = []
+
+  for (const m of meses) {
+    const despesas = await backendClient.listarDespesas(sessao.token, { dataInicio: m.inicio, dataFim: m.fim, limit: 1000 })
+    const lista: any[] = Array.isArray(despesas) ? despesas : despesas.dados ?? []
+    const total = lista.reduce((acc: number, d: any) => acc + (Number(d.valor) || 0), 0)
+    if (total > 0) {
+      totais.push(total)
+      linhasMeses.push(`• ${m.label}: ${moeda(total)}`)
+    }
+  }
+
+  if (totais.length === 0) {
+    return { resposta: 'Não encontrei despesas registradas nos últimos 6 meses para calcular uma média.' }
+  }
+
+  const media = totais.reduce((a, b) => a + b, 0) / totais.length
+  const maior = Math.max(...totais)
+  const menor = Math.min(...totais)
+
+  return {
+    resposta: [
+      `📊 *Média mensal de gastos (últimos ${totais.length} meses)*`,
+      `Média: *${moeda(media)}*`,
+      `Maior mês: ${moeda(maior)} · Menor: ${moeda(menor)}`,
+      '',
+      ...linhasMeses,
+    ].join('\n'),
+  }
+}
+
 async function consultarContasPagar(sessao: SessaoWhatsapp): Promise<ResultadoIntencao> {
   const contas = await backendClient.listarContasPagar(sessao.token, { status: 'PENDENTE' });
   const lista = Array.isArray(contas) ? contas : contas.dados || [];
@@ -737,6 +783,7 @@ const HANDLERS: Record<string, (sessao: SessaoWhatsapp, campos: CamposExtraidos)
   REGISTRAR_VENDA: registrarVenda,
   MARCAR_CONTA_PAGA: marcarContaPaga,
   CONSULTAR_RESUMO: consultarResumo,
+  CONSULTAR_MEDIA_GASTOS: consultarMediaGastos,
   CONSULTAR_CONTAS_PAGAR: consultarContasPagar,
   CONSULTAR_PRECOS_MERCADO: consultarPrecosMercado,
   CADASTRAR_ALERTA_PRECO: cadastrarAlertaPreco,

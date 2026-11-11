@@ -15,6 +15,7 @@ export type Intent =
   | 'REGISTRAR_VENDA'
   | 'MARCAR_CONTA_PAGA'
   | 'CONSULTAR_RESUMO'
+  | 'CONSULTAR_MEDIA_GASTOS'
   | 'CONSULTAR_CONTAS_PAGAR'
   | 'CONSULTAR_PRECOS_MERCADO'
   | 'CADASTRAR_ALERTA_PRECO'
@@ -100,6 +101,7 @@ const INTENTS: Intent[] = [
   'REGISTRAR_VENDA',
   'MARCAR_CONTA_PAGA',
   'CONSULTAR_RESUMO',
+  'CONSULTAR_MEDIA_GASTOS',
   'CONSULTAR_CONTAS_PAGAR',
   'CONSULTAR_PRECOS_MERCADO',
   'CADASTRAR_ALERTA_PRECO',
@@ -194,12 +196,13 @@ Exemplos de intenção:
 - "vendi 200 sacas de soja a 148 reais" -> REGISTRAR_VENDA (produto=soja, quantidade=200, unidadeMedida=SACA, valor=148)
 - "mil litros de diesel a 5,70" / "comprei 1000 litros de combustível a 5,70 o litro" -> REGISTRAR_DESPESA (valor=5700 [1000 × 5,70, TOTAL calculado por você], categoria=Combustível, descricao="Compra de diesel", data=hoje) — é uma COMPRA de insumo, não uma venda, mesmo com o mesmo formato "quantidade a R$X" de uma venda.
 - "marque como pago a primeira parcela das sementes" / "já paguei a conta do fornecedor X" -> MARCAR_CONTA_PAGA (descricao="primeira parcela sementes" ou o texto que identifica a conta já existente, data=hoje se não disser quando pagou). NUNCA use REGISTRAR_DESPESA/REGISTRAR_CONTA_PAGAR pra isso — é sobre uma conta que JÁ existe, não um lançamento novo.
-- "quanto devo até o fim do mês" / "qual meu resumo" -> CONSULTAR_RESUMO
+- "quanto devo até o fim do mês" / "qual meu resumo financeiro" / "como tá meu caixa" -> CONSULTAR_RESUMO
+- "qual a média de gastos" / "quanto gasto por mês" / "minha média mensal" / "quanto costumo gastar" -> CONSULTAR_MEDIA_GASTOS
 - "o que tá vencendo" / "contas a pagar" -> CONSULTAR_CONTAS_PAGAR
 - "quanto tá a saca da soja" / "preço do milho hoje" -> CONSULTAR_PRECOS_MERCADO
 - "oi" / "bom dia" -> SAUDACAO (preencha "resposta" com uma saudação curta se apresentando como SafraBot)
 - pedido de ajuda / "o que você faz" -> AJUDA (preencha "resposta" explicando em 2-3 frases o que dá pra fazer: registrar despesa/manutenção de máquina, conta a pagar, conta a receber, venda, consultar resumo/preços/safras/saldo, cadastrar alertas de preço, máquinas, arrendamento e safra/atividade pecuária)
-- mensagem incompreensível -> NAO_ENTENDI (preencha "resposta" pedindo para reformular, com um exemplo)
+- mensagem incompreensível ou fora do escopo (receita de culinária, clima, política, piadas, perguntas gerais não relacionadas à gestão da propriedade rural) -> NAO_ENTENDI (preencha "resposta" dizendo educadamente que só pode ajudar com gestão financeira e produtiva da fazenda, e dê um exemplo do que dá pra fazer)
 - "me avisa quando soja passar de 148 reais" / "quero alerta de preço pra milho quando chegar em 65" -> CADASTRAR_ALERTA_PRECO (cultura=soja, precoAlvo=148, condicaoAlerta=ACIMA)
 - "me avisa quando soja cair abaixo de 130" -> CADASTRAR_ALERTA_PRECO (cultura=soja, precoAlvo=130, condicaoAlerta=ABAIXO)
 - "quais alertas tenho" / "meus alertas de preço" / "ver alertas" -> LISTAR_ALERTAS_PRECO
