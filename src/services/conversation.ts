@@ -8,10 +8,21 @@ import * as numerosNaoCadastrados from './numerosNaoCadastrados';
 import { PDFParse } from 'pdf-parse';
 import { extrairIntencao, classificarImagem, CamposExtraidos, FormaPagamento } from './ai';
 import { tratarIntencao } from '../intents/handlers';
-import { consultarWhatsapp } from './backendClient';
+import { consultarWhatsapp, gerarLinkRenovacaoPix } from './backendClient';
+import { verificarPlano, avisoVencimentoProximo } from './planGuard';
 import { SessaoWhatsapp } from '../database/entities/SessaoWhatsapp';
 
 const COMANDOS_CONSULTA = /^(saldo|resumo|gastos|despesas|safras?|lavoura|ajuda|help|\?)(\s|$)/i;
+
+const INTENTS_LANCAMENTO = new Set([
+  'REGISTRAR_DESPESA',
+  'REGISTRAR_CONTA_PAGAR',
+  'REGISTRAR_CONTA_RECEBER',
+  'REGISTRAR_VENDA',
+  'REGISTRAR_MANUTENCAO_MAQUINA',
+  'CADASTRAR_ARRENDAMENTO',
+  'CADASTRAR_SAFRA',
+]);
 
 const FALHA_IA: CamposExtraidos = {
   intent: 'NAO_ENTENDI',
@@ -171,6 +182,26 @@ async function resolverSessao(celular: string): Promise<SessaoWhatsapp | null> {
 async function processarCampos(sessao: SessaoWhatsapp, celular: string, campos: CamposExtraidos): Promise<string> {
   console.log(`[conversation] campos extraídos para ${celular}: ${JSON.stringify(campos)}`);
 
+  // Intenção de renovar plano — gera link Pix direto, sem chamar handlers de lançamento.
+  if (campos.intent === 'RENOVAR_PLANO') {
+    const link = await gerarLinkRenovacaoPix(celular);
+    const resposta = link
+      ? `💳 *Renovação via Pix*\n\nClique no link abaixo para pagar e renovar seu plano:\n\n${link}\n\nApós o pagamento, seu acesso será liberado automaticamente. ✅`
+      : '❌ Não consegui gerar o link de pagamento agora. Tente pelo app: camposync.com.br';
+    await session.limparContextoPendente(celular);
+    await history.salvarMensagem(celular, 'assistant', resposta);
+    return resposta;
+  }
+
+  // Verifica plano antes de executar intenções de lançamento — bloqueia se inadimplente/cancelado.
+  if (INTENTS_LANCAMENTO.has(campos.intent)) {
+    const bloqueio = await verificarPlano(celular);
+    if (bloqueio) {
+      await history.salvarMensagem(celular, 'assistant', bloqueio);
+      return bloqueio;
+    }
+  }
+
   let resultado;
   try {
     resultado = await comRenovacaoDeToken(sessao, (s) => tratarIntencao(s, campos));
@@ -186,8 +217,16 @@ async function processarCampos(sessao: SessaoWhatsapp, celular: string, campos: 
   }
 
   await session.limparContextoPendente(celular);
-  await history.salvarMensagem(celular, 'assistant', resultado.resposta!);
-  return resultado.resposta!;
+
+  // Appends a vencimento warning when plan is active but expiring soon (≤ 7 days).
+  let resposta = resultado.resposta!;
+  if (INTENTS_LANCAMENTO.has(campos.intent)) {
+    const aviso = await avisoVencimentoProximo(celular);
+    if (aviso) resposta = resposta + aviso;
+  }
+
+  await history.salvarMensagem(celular, 'assistant', resposta);
+  return resposta;
 }
 
 export async function handleMessage({ celular, texto }: { celular: string; texto: string }): Promise<string> {
@@ -201,6 +240,20 @@ export async function handleMessage({ celular, texto }: { celular: string; texto
   }
 
   await history.salvarMensagem(celular, 'user', texto);
+
+  // Palavra-chave especial para renovação de plano via Pix — interceptada antes de qualquer
+  // outra lógica para que funcione mesmo com plano inadimplente/cancelado.
+  if (/^renovar$/i.test(texto.trim())) {
+    const link = await gerarLinkRenovacaoPix(celular);
+    let resposta: string;
+    if (link) {
+      resposta = `💳 *Renovação via Pix*\n\nClique no link abaixo para pagar e renovar seu plano:\n\n${link}\n\nApós o pagamento, seu acesso será liberado automaticamente. ✅`;
+    } else {
+      resposta = '❌ Não consegui gerar o link de pagamento agora. Tente pelo app: camposync.com.br';
+    }
+    await history.salvarMensagem(celular, 'assistant', resposta);
+    return resposta;
+  }
 
   // Comandos de consulta rápida (saldo, gastos, safras, ajuda) não passam pela IA —
   // o backend processa e responde direto sem precisar de extração de intenção.

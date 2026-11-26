@@ -33,6 +33,7 @@ export type Intent =
   | 'CONSULTAR_PRECO_UNITARIO'
   | 'SAUDACAO'
   | 'AJUDA'
+  | 'RENOVAR_PLANO'
   | 'NAO_ENTENDI';
 
 export type FormaPagamento = 'DINHEIRO' | 'PIX' | 'CARTAO' | 'BOLETO' | 'FINANCIAMENTO' | 'OUTRO';
@@ -144,6 +145,7 @@ const INTENTS: Intent[] = [
   'CONSULTAR_PRECO_UNITARIO',
   'SAUDACAO',
   'AJUDA',
+  'RENOVAR_PLANO',
   'NAO_ENTENDI',
 ];
 
@@ -256,6 +258,7 @@ Exemplos de intenção:
 - "quanto tá a saca da soja" / "preço do milho hoje" -> CONSULTAR_PRECOS_MERCADO
 - "oi" / "bom dia" -> SAUDACAO (preencha "resposta" com uma saudação curta se apresentando como SafraBot)
 - pedido de ajuda / "o que você faz" -> AJUDA (preencha "resposta" explicando em 2-3 frases o que dá pra fazer: registrar despesa/manutenção de máquina, conta a pagar, conta a receber, venda, consultar resumo/preços/safras/saldo, cadastrar alertas de preço, máquinas, arrendamento e safra/atividade pecuária)
+- "renovar plano" / "pagar assinatura" / "quero renovar" / "meu plano venceu" / "como pago" -> RENOVAR_PLANO
 - mensagem incompreensível ou fora do escopo (receita de culinária, clima, política, piadas, perguntas gerais não relacionadas à gestão da propriedade rural) -> NAO_ENTENDI (preencha "resposta" dizendo educadamente que só pode ajudar com gestão financeira e produtiva da fazenda, e dê um exemplo do que dá pra fazer)
 - "me avisa quando soja passar de 148 reais" / "quero alerta de preço pra milho quando chegar em 65" -> CADASTRAR_ALERTA_PRECO (cultura=soja, precoAlvo=148, condicaoAlerta=ACIMA)
 - "me avisa quando soja cair abaixo de 130" -> CADASTRAR_ALERTA_PRECO (cultura=soja, precoAlvo=130, condicaoAlerta=ABAIXO)
