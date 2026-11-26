@@ -193,6 +193,40 @@ export async function criarSafra(token: string, fazendaSlug: string, payload: Re
   return data;
 }
 
+export interface StatusPlano {
+  status: 'ativa' | 'inadimplente' | 'cancelada' | 'pendente' | 'sem_assinatura';
+  dataVencimento?: string;
+  diasRestantes?: number;
+  nomeCliente?: string;
+}
+
+export async function consultarStatusPlano(celular: string): Promise<StatusPlano> {
+  try {
+    const { data } = await api.post<StatusPlano>(
+      '/bot/whatsapp/status-plano',
+      { celular },
+      { headers: { 'x-integration-secret': process.env.WHATSAPP_BOT_SECRET } },
+    );
+    return data;
+  } catch (err: any) {
+    if (err.response?.status === 404) return { status: 'sem_assinatura' };
+    return { status: 'ativa' }; // fail open — don't block user if check fails
+  }
+}
+
+export async function gerarLinkRenovacaoPix(celular: string): Promise<string | null> {
+  try {
+    const { data } = await api.post<{ linkPagamento: string }>(
+      '/bot/whatsapp/renovar-pix',
+      { celular },
+      { headers: { 'x-integration-secret': process.env.WHATSAPP_BOT_SECRET } },
+    );
+    return data.linkPagamento ?? null;
+  } catch {
+    return null;
+  }
+}
+
 // Consulta de saldo/gastos/safras pelo WhatsApp — processada pelo backend via x-integration-secret.
 export async function consultarWhatsapp(celular: string, mensagem: string): Promise<string | null> {
   try {
